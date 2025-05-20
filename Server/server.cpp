@@ -22,6 +22,7 @@ int g_new_id = 0;
 concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
 void worker();
+void disconnect(int c_id);
 void process_packet(int c_id, char* packet);
 
 int main() {
@@ -74,10 +75,18 @@ void worker() {
 		EXP_OVER* eo = reinterpret_cast<EXP_OVER*>(o);
 
 		if (FALSE == ret) {
-			continue;
+			if (eo->m_io_type == IO_ACCEPT) { std::cout << "Accept Error" << std::endl; }
+			else {
+				std::cout << "GQCS Error on Client[" << key << "]" << std::endl;
+				disconnect(static_cast<int>(key));
+				if (eo->m_io_type == IO_SEND) delete eo;
+				continue;
+			}
 		}
 
 		if ((eo->m_io_type == IO_RECV || eo->m_io_type == IO_SEND) && (0 == io_size)) {
+			disconnect(static_cast<int>(key));
+			if (eo->m_io_type == IO_SEND) delete eo;
 			continue;
 		}
 
@@ -105,16 +114,36 @@ void worker() {
 			int cliend_id = static_cast<int>(key);
 
 			std::shared_ptr<SESSION> client = g_clients.at(cliend_id);
-			if (nullptr == client) return;
+			if (nullptr == client) break;
 
+			int remain_data = io_size + client->m_remained;
 			char* p = eo->m_buffer;
-			process_packet(cliend_id, p);
+			while (remain_data > 0) {
+				int packet_size = p[0];
+				if (packet_size <= remain_data) {
+					process_packet(cliend_id, p);
+					p = p + packet_size;
+					remain_data = remain_data - packet_size;
+				}
+				else break;
+			}
 
+			client->m_remained = remain_data;
+			if (remain_data > 0) {
+				memcpy(eo->m_buffer, p, remain_data);
+			}
 			client->do_recv();
 			break;
 		}
 		}
 	}
+}
+
+void disconnect(int c_id) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	g_clients.at(c_id) = nullptr;
 }
 
 void process_packet(int c_id, char* packet) {

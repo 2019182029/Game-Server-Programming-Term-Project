@@ -27,8 +27,6 @@ SESSION::SESSION() {
 
 SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
-
-	do_recv();
 }
 
 SESSION::~SESSION() {
