@@ -1,16 +1,32 @@
+#include <WS2tcpip.h>
 #include <windows.h>
 #include <tchar.h>
+#include <iostream>
+
 #include "..\protocol.h"
+#include "EXP_OVER.h"
 
-//#pragma comment(linker,"/entry:WinMainCRTStartup /subsystem:console")
+#pragma comment(lib, "WS2_32.lib")
+#pragma comment(lib, "MSWSock.lib")
+#pragma comment(linker,"/entry:WinMainCRTStartup /subsystem:console")
 
+//////////////////////////////////////////////////
+// Windows
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class";
 LPCTSTR lpszWindowName = L"Game Server Programming";
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam);
 
+//////////////////////////////////////////////////
+// Server
+constexpr short HOST_PORT = 3000;
+
 RECT rect;
+SOCKET g_socket;
+EXP_OVER g_recv_over;
+
+void InitSocket();
 
 //////////////////////////////////////////////////
 // Background
@@ -99,6 +115,8 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				tile_map[y][x] = ((x / 3) + (y / 3)) % 2;
 			}
 		}
+
+		InitSocket();
 		break;
 
 	case WM_PAINT: {
@@ -124,4 +142,25 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		return 0;
 	}
 	return DefWindowProc(hWnd, iMessage, wParam, lParam);
+}
+
+// Initialize Socket and WSAConnect to Server
+void InitSocket() {
+	WSADATA WSAData;
+	auto ret = WSAStartup(MAKEWORD(2, 2), &WSAData);
+	if (0 != ret) { std::cout << "WSAStartup Failed : " << WSAGetLastError() << std::endl; }
+	else { std::cout << "WSAStartup Succeed" << std::endl; }
+
+	g_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+	if (INVALID_SOCKET == g_socket) { std::cout << "Client Socket Create Failed : " << WSAGetLastError() << std::endl; }
+	else { std::cout << "WSASocket Succeed" << std::endl; }
+
+	SOCKADDR_IN addr;
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(HOST_PORT);
+	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+	ret = WSAConnect(g_socket, reinterpret_cast<const sockaddr*>(&addr), sizeof(SOCKADDR_IN), NULL, NULL, NULL, NULL);
+	if (SOCKET_ERROR == ret) { std::cout << "WSAConnect Failed : " << WSAGetLastError() << std::endl; }
+	else { std::cout << "WSAConnect Succeed" << std::endl; }
 }
