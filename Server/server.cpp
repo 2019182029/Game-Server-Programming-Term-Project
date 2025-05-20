@@ -22,6 +22,7 @@ int g_new_id = 0;
 concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
 void worker();
+void process_packet(int c_id, char* packet);
 
 int main() {
 	WSADATA WSAData;
@@ -83,10 +84,8 @@ void worker() {
 		switch (eo->m_io_type) {
 		case IO_ACCEPT: {
 			int client_id = g_new_id++;
-			std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
-			p->m_id = client_id;
+			std::shared_ptr<SESSION> p = std::make_shared<SESSION>(client_id, g_c_socket);
 			CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket), g_hIOCP, client_id, 0);
-			p->m_c_socket = g_c_socket;
 			g_clients.insert(std::make_pair(client_id, p));
 			p->do_recv();
 
@@ -103,9 +102,40 @@ void worker() {
 		}
 
 		case IO_RECV: {
+			int cliend_id = static_cast<int>(key);
 
+			std::shared_ptr<SESSION> client = g_clients.at(cliend_id);
+			if (nullptr == client) return;
+
+			char* p = eo->m_buffer;
+			process_packet(cliend_id, p);
+
+			client->do_recv();
 			break;
 		}
 		}
+	}
+}
+
+void process_packet(int c_id, char* packet) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	switch (packet[1]) {
+	case CS_LOGIN: {
+		CS_LOGIN_PACKET* c_p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
+		SC_LOGIN_INFO_PACKET s_p;
+		s_p.size = sizeof(SC_LOGIN_INFO_PACKET);
+		s_p.type = SC_LOGIN_INFO;
+		s_p.id = c_id;
+		s_p.hp = 10;
+		s_p.max_hp = 10;
+		s_p.exp = 0;
+		s_p.level = 1;
+		s_p.x = W_WIDTH / 2;
+		s_p.y = W_HEIGHT / 2;
+		client->do_send(&s_p);
+		break;
+	}
 	}
 }
