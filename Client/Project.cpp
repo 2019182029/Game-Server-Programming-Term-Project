@@ -20,7 +20,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
 //////////////////////////////////////////////////
 // Server
-constexpr short HOST_PORT = 3000;
+constexpr short SERVER_PORT = 3000;
 
 RECT rect;
 SOCKET g_socket;
@@ -110,8 +110,8 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		GetObject(bg.m_hBitmap[1], sizeof(BITMAP), &bg.m_bmp[1]);
 		GetClientRect(hWnd, &rect);
 
-		for (int y = 0; y < 2000; ++y) {
-			for (int x = 0; x < 2000; ++x) {
+		for (int y = 0; y < W_HEIGHT; ++y) {
+			for (int x = 0; x < W_WIDTH; ++x) {
 				tile_map[y][x] = ((x / 3) + (y / 3)) % 2;
 			}
 		}
@@ -157,7 +157,7 @@ void InitSocket() {
 
 	SOCKADDR_IN addr;
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(HOST_PORT);
+	addr.sin_port = htons(SERVER_PORT);
 	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
 	ret = WSAConnect(g_socket, reinterpret_cast<const sockaddr*>(&addr), sizeof(SOCKADDR_IN), NULL, NULL, NULL, NULL);
