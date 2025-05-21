@@ -1,10 +1,10 @@
 #include <WS2tcpip.h>
 #include <MSWSock.h>
 #include <thread>
+#include <array>
 #include <vector>
 #include <atomic>
 #include <iostream>
-#include <concurrent_unordered_map.h>
 
 #include "..\protocol.h"
 #include "SESSION.h"
@@ -19,9 +19,12 @@ SOCKET g_s_socket, g_c_socket;
 EXP_OVER g_accept_over{ IO_ACCEPT };
 
 int g_new_id = 0;
-concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
+
+std::array<std::array<std::unordered_set<int>, SECTOR_COLS>, SECTOR_ROWS> g_sector;
+std::mutex g_mutex[SECTOR_ROWS][SECTOR_COLS];
 
 void worker();
+bool can_see(int from, int to);
 void disconnect(int c_id);
 void process_packet(int c_id, char* packet);
 
@@ -139,6 +142,17 @@ void worker() {
 	}
 }
 
+bool can_see(int from, int to) {
+	std::shared_ptr<SESSION> client_from = g_clients.at(from);
+	std::shared_ptr<SESSION> client_to = g_clients.at(to);
+	if (!client_from || !client_to) return false;
+
+	if (abs(client_from->m_x - client_to->m_x) > VIEW_RANGE) { 
+		return false; 
+	}
+	return (abs(client_from->m_y - client_to->m_y) <= VIEW_RANGE);
+}
+
 void disconnect(int c_id) {
 	std::shared_ptr<SESSION> client = g_clients.at(c_id);
 	if (nullptr == client) return;
@@ -152,7 +166,41 @@ void process_packet(int c_id, char* packet) {
 
 	switch (packet[1]) {
 	case CS_LOGIN: {
+		client->m_state = ST_INGAME;
 		client->send_login_info();
+
+		// Add Client into Sector
+		short sx = client->m_x / SECTOR_WIDTH;
+		short sy = client->m_y / SECTOR_HEIGHT;
+		{
+			std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
+			g_sector[sy][sx].insert(c_id);
+		}
+
+		// Search Nearby Objects by Sector
+		for (short dy = -1; dy <= 1; ++dy) {
+			for (short dx = -1; dx <= 1; ++dx) {
+				short nx = sx + dx;
+				short ny = sy + dy;
+
+				if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+				std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+				for (auto pl : g_sector[ny][nx]) {
+					std::shared_ptr<SESSION> other = g_clients.at(pl);
+					if (nullptr == other) { continue; }
+
+					if (ST_INGAME != other->m_state) { continue; }
+					if (other->m_id == c_id) { continue; }
+					if (!can_see(c_id, other->m_id)) { continue; }
+
+					client->send_add_object(other->m_id);
+					other->send_add_object(c_id);
+
+					std::cout << "Client " << c_id << "now can See" << other->m_id << std::endl;
+				}
+			}
+		}
 		break;
 	}
 

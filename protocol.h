@@ -21,8 +21,10 @@ constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
 
 // Sector
-constexpr int SECTOR_WIDTH = 8;
-constexpr int SECTOR_HEIGHT = 8;
+constexpr int VIEW_RANGE = 15;
+
+constexpr int SECTOR_WIDTH = 10;
+constexpr int SECTOR_HEIGHT = 10;
 
 constexpr int SECTOR_ROWS = W_WIDTH / SECTOR_WIDTH;
 constexpr int SECTOR_COLS = W_HEIGHT / SECTOR_WIDTH;
@@ -90,6 +92,7 @@ struct SC_ADD_OBJECT_PACKET {
 	unsigned char size;
 	char	type;
 	int		id;
+	int		level;
 	short	x, y;
 	char	name[NAME_SIZE];
 };

@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <tchar.h>
 #include <iostream>
+#include <vector>
 
 #include "..\protocol.h"
 #include "EXP_OVER.h"
@@ -46,12 +47,10 @@ short camera_y = 0;
 
 class PLAYER {
 public:
-	short m_x, m_y;
 	int	m_id;
-	int	m_hp;
-	int	m_max_hp;
-	int	m_exp;
-	int	m_level;
+	short m_x, m_y;
+	int	m_hp; int m_max_hp;
+	int	m_exp; int m_level;
 
 public:
 	void update() {
@@ -82,6 +81,7 @@ public:
 };
 
 PLAYER player;
+std::vector<PLAYER> others;
 
 //////////////////////////////////////////////////
 // Background
@@ -115,6 +115,13 @@ public:
 				// Player
 				if ((map_x == player.m_x) && (map_y == player.m_y)) {
 					player.print(hDC, x, y);
+				}
+
+				// Others
+				for (const auto& other : others) {
+					if ((map_x == other.m_x) && (map_y == other.m_y)) {
+						other.print(hDC, x, y);
+					}
 				}
 			}
 		}
@@ -277,23 +284,36 @@ void do_send(void* buff) {
 	}
 }
 
-void process_packet(char* p) {
-	char packet_type = p[1];
+void process_packet(char* packet) {
+	char packet_type = packet[1];
 
 	switch (packet_type) {
-	case SC_LOGIN_INFO:
-		SC_LOGIN_INFO_PACKET* s_p = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(p);
-		player.m_x = s_p->x;
-		player.m_y = s_p->y;
-		player.m_id = s_p->id;
-		player.m_hp = s_p->hp;
-		player.m_max_hp = s_p->max_hp;
-		player.m_exp = s_p->exp;
-		player.m_level = s_p->level;
+	case SC_LOGIN_INFO: {
+		SC_LOGIN_INFO_PACKET* p = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(packet);
+		player.m_x = p->x;
+		player.m_y = p->y;
+		player.m_id = p->id;
+		player.m_hp = p->hp;
+		player.m_max_hp = p->max_hp;
+		player.m_exp = p->exp;
+		player.m_level = p->level;
 		player.update();
-		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
 	}
+
+	case SC_ADD_OBJECT: {
+		SC_ADD_OBJECT_PACKET* p = reinterpret_cast<SC_ADD_OBJECT_PACKET*>(packet);
+		PLAYER other;
+		other.m_id = p->id;
+		other.m_x = p->x;
+		other.m_y = p->y;
+		other.m_level = p->level;
+		others.emplace_back(other);
+		break;
+	}
+	}
+
+	InvalidateRect(g_hWnd, NULL, FALSE);
 }
 
 void recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, DWORD flags) {

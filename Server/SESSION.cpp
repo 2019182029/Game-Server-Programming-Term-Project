@@ -3,6 +3,8 @@
 #include "SESSION.h"
 #include "..\protocol.h"
 
+concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
+
 //////////////////////////////////////////////////
 // EXP_OVER
 EXP_OVER::EXP_OVER() {
@@ -81,5 +83,22 @@ void SESSION::send_login_info() {
 	p.max_hp = m_max_hp;
 	p.exp = m_exp;
 	p.level = m_level;
+	do_send(&p);
+}
+
+void SESSION::send_add_object(int c_id) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	SC_ADD_OBJECT_PACKET p;
+	p.size = sizeof(SC_ADD_OBJECT_PACKET);
+	p.type = SC_ADD_OBJECT;
+	p.id = c_id;
+	p.x = client->m_x;
+	p.y = client->m_y;
+	p.level = client->m_level;
+	m_vl.lock();
+	m_view_list.insert(c_id);
+	m_vl.unlock();
 	do_send(&p);
 }

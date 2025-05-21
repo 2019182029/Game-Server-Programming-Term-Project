@@ -2,6 +2,14 @@
 
 #include "WS2tcpip.h"
 #include "atomic"
+#include "unordered_set"
+#include "mutex"
+#include <concurrent_unordered_map.h>
+
+class EXP_OVER;
+class SESSION;
+
+extern concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
 //////////////////////////////////////////////////
 // EXP_OVER
@@ -32,6 +40,8 @@ public:
 	int m_remained;
 
 	std::atomic<STATE> m_state;
+	std::unordered_set<int> m_view_list;
+	std::mutex m_vl;
 
 	short m_x, m_y;
 	int m_id;
@@ -47,4 +57,5 @@ public:
 	void do_recv();
 	void do_send(void* buff);
 	void send_login_info();
+	void send_add_object(int c_id);
 };
