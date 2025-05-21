@@ -25,6 +25,7 @@ std::mutex g_mutex[SECTOR_ROWS][SECTOR_COLS];
 
 void worker();
 bool can_see(int from, int to);
+void update_sector(int c_id, short old_x, short old_y, short new_x, short new_y);
 void disconnect(int c_id);
 void process_packet(int c_id, char* packet);
 
@@ -153,6 +154,24 @@ bool can_see(int from, int to) {
 	return (abs(client_from->m_y - client_to->m_y) <= VIEW_RANGE);
 }
 
+void update_sector(int c_id, short old_x, short old_y, short new_x, short new_y) {
+	short old_sx = old_x / SECTOR_WIDTH;
+	short old_sy = old_y / SECTOR_HEIGHT;
+
+	short new_sx = new_x / SECTOR_WIDTH;
+	short new_sy = new_y / SECTOR_HEIGHT;
+
+	if ((old_sx != new_sx) || (old_sy != new_sy)) {
+		{
+			std::lock_guard<std::mutex> lock(g_mutex[old_sy][old_sx]);
+			g_sector[old_sy][old_sx].erase(c_id);
+		}
+
+		std::lock_guard<std::mutex> lock(g_mutex[new_sy][new_sx]);
+		g_sector[new_sy][new_sx].insert(c_id);
+	}
+}
+
 void disconnect(int c_id) {
 	std::shared_ptr<SESSION> client = g_clients.at(c_id);
 	if (nullptr == client) return;
@@ -196,8 +215,6 @@ void process_packet(int c_id, char* packet) {
 
 					client->send_add_object(other->m_id);
 					other->send_add_object(c_id);
-
-					std::cout << "Client " << c_id << "now can See" << other->m_id << std::endl;
 				}
 			}
 		}
@@ -206,8 +223,10 @@ void process_packet(int c_id, char* packet) {
 
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
-		short new_x = client->m_x;
-		short new_y = client->m_y;
+		short old_x = client->m_x;
+		short old_y = client->m_y;
+		short new_x = old_x;
+		short new_y = old_y;
 		switch (p->direction) {
 		case 0: --new_y; break;
 		case 1: ++new_y; break;
@@ -216,6 +235,63 @@ void process_packet(int c_id, char* packet) {
 		}
 		if ((0 <= new_x) && (new_x < W_WIDTH)) { client->m_x = new_x; }
 		if ((0 <= new_y) && (new_y < W_HEIGHT)) { client->m_y = new_y; }
+
+		// Update Sector
+		update_sector(c_id, old_x, old_y, new_x, new_y);
+
+		int sx = client->m_x / SECTOR_WIDTH;
+		int sy = client->m_y / SECTOR_HEIGHT;
+
+		// Create View List by Sector
+		std::unordered_set<int> near_list;
+		client->m_vl.lock();
+		std::unordered_set<int> old_vlist = client->m_view_list;
+		client->m_vl.unlock();
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				short nx = sx + dx;
+				short ny = sy + dy;
+
+				if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+				for (auto cl : g_sector[ny][nx]) {
+					std::shared_ptr<SESSION> other = g_clients.at(cl);
+					if (nullptr == other) { continue; }
+
+					if (ST_INGAME != other->m_state) { continue; }
+					if (other->m_id == c_id) { continue; }
+					if (can_see(c_id, other->m_id)) { near_list.insert(other->m_id); }
+				}
+			}
+		}
+
+		client->send_move_object(c_id);
+
+		for (auto& cl : near_list) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) continue;
+
+			other->m_vl.lock();
+			if (other->m_view_list.count(c_id)) {
+				other->m_vl.unlock();
+				other->send_move_object(c_id);
+			} else {
+				other->m_vl.unlock();
+				other->send_add_object(c_id);
+			}
+
+			if (!old_vlist.count(cl)) { client->send_add_object(cl); }
+		}
+
+		for (auto& cl : old_vlist) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) continue;
+
+			if (!near_list.count(cl)) {
+				client->send_remove_object(cl);
+				other->send_remove_object(c_id);
+			}
+		}
 		break;
 	}
 	}

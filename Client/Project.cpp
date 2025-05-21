@@ -2,7 +2,7 @@
 #include <windows.h>
 #include <tchar.h>
 #include <iostream>
-#include <vector>
+#include <unordered_map>
 
 #include "..\protocol.h"
 #include "EXP_OVER.h"
@@ -81,7 +81,7 @@ public:
 };
 
 PLAYER player;
-std::vector<PLAYER> others;
+std::unordered_map<int, PLAYER> others;
 
 //////////////////////////////////////////////////
 // Background
@@ -119,8 +119,8 @@ public:
 
 				// Others
 				for (const auto& other : others) {
-					if ((map_x == other.m_x) && (map_y == other.m_y)) {
-						other.print(hDC, x, y);
+					if ((map_x == other.second.m_x) && (map_y == other.second.m_y)) {
+						other.second.print(hDC, x, y);
 					}
 				}
 			}
@@ -308,7 +308,25 @@ void process_packet(char* packet) {
 		other.m_x = p->x;
 		other.m_y = p->y;
 		other.m_level = p->level;
-		others.emplace_back(other);
+		others.emplace(other.m_id, other);
+		break;
+	}
+
+	case SC_MOVE_OBJECT: {
+		SC_MOVE_OBJECT_PACKET* p = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(packet);
+		if (player.m_id == p->id) {
+			player.m_x = p->x;
+			player.m_y = p->y;
+			break;
+		}
+		others.at(p->id).m_x = p->x;
+		others.at(p->id).m_y = p->y;
+		break;
+	}
+
+	case SC_REMOVE_OBJECT: {
+		SC_REMOVE_OBJECT_PACKET* p = reinterpret_cast<SC_REMOVE_OBJECT_PACKET*>(packet);
+		others.erase(p->id);
 		break;
 	}
 	}

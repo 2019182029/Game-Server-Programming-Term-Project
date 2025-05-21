@@ -21,7 +21,7 @@ constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
 
 // Sector
-constexpr int VIEW_RANGE = 15;
+constexpr int VIEW_RANGE = 7;
 
 constexpr int SECTOR_WIDTH = 10;
 constexpr int SECTOR_HEIGHT = 10;

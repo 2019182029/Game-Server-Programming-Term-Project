@@ -102,3 +102,33 @@ void SESSION::send_add_object(int c_id) {
 	m_vl.unlock();
 	do_send(&p);
 }
+
+void SESSION::send_move_object(int c_id) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	SC_MOVE_OBJECT_PACKET p;
+	p.id = c_id;
+	p.size = sizeof(SC_MOVE_OBJECT_PACKET);
+	p.type = SC_MOVE_OBJECT;
+	p.x = client->m_x;
+	p.y = client->m_y;
+	do_send(&p);
+}
+
+void SESSION::send_remove_object(int c_id) {
+	m_vl.lock();
+	if (m_view_list.count(c_id)) {
+		m_view_list.erase(c_id);
+	} else {
+		m_vl.unlock();
+		return;
+	}
+	m_vl.unlock();
+	
+	SC_REMOVE_OBJECT_PACKET p;
+	p.size = sizeof(p);
+	p.type = SC_REMOVE_OBJECT;
+	p.id = c_id;
+	do_send(&p);
+}

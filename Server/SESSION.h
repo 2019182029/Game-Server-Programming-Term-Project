@@ -58,4 +58,6 @@ public:
 	void do_send(void* buff);
 	void send_login_info();
 	void send_add_object(int c_id);
+	void send_move_object(int c_id);
+	void send_remove_object(int c_id);
 };
