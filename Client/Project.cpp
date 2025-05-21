@@ -8,6 +8,7 @@
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
+#pragma comment(lib, "msimg32.lib")
 #pragma comment(linker,"/entry:WinMainCRTStartup /subsystem:console")
 
 //////////////////////////////////////////////////
@@ -36,31 +37,70 @@ void CALLBACK recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, 
 void CALLBACK send_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, DWORD flags);
 
 //////////////////////////////////////////////////
+// Player
+HBITMAP player_hBitmap[5];
+BITMAP player_bmp[5];
+
+class PLAYER {
+public:
+	short m_x, m_y;
+	int	m_id;
+	int	m_hp;
+	int	m_max_hp;
+	int	m_exp;
+	int	m_level;
+
+public:
+	void print(HDC hDC, short x, short y) const {
+		HDC mDC = CreateCompatibleDC(hDC);
+		HGDIOBJ hBitmap = SelectObject(mDC, player_hBitmap[m_level]);
+
+		TransparentBlt(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
+			mDC, 0, 0, player_bmp[m_level].bmWidth, player_bmp[m_level].bmHeight, RGB(255, 255, 255));
+
+		SelectObject(mDC, hBitmap);
+		DeleteDC(mDC);
+	}
+};
+
+PLAYER player;
+
+//////////////////////////////////////////////////
 // Background
 char tile_map[W_WIDTH][W_HEIGHT];
-int camera_x = 0;
-int camera_y = 0;
+
+short camera_x = player.m_x - (S_VISIBLE_TILES / 2);
+short camera_y = player.m_y - (S_VISIBLE_TILES / 2);
 
 class BACKGROUND {
 public:
-	BITMAP m_bmp[2];
 	HBITMAP m_hBitmap[2];
+	BITMAP m_bmp[2];
 
-	void print(HDC mDC) const {
-		for (int y = 0; y < S_VISIBLE_TILES; ++y) {
-			for (int x = 0; x < S_VISIBLE_TILES; ++x) {
-				int map_x = camera_x + x;
-				int map_y = camera_y + y;
+public:
+	void print(HDC hDC) const {
+		for (short y = 0; y < S_VISIBLE_TILES; ++y) {
+			for (short x = 0; x < S_VISIBLE_TILES; ++x) {
+				// Tile
+				short map_x = camera_x + x;
+				short map_y = camera_y + y;
+
+				if (map_x < 0 || map_y < 0 || map_x >= W_WIDTH || map_y >= W_HEIGHT) { continue; }
 
 				char tile_type = tile_map[map_y][map_x];
-				HDC tileDC = CreateCompatibleDC(mDC);
+				HDC tileDC = CreateCompatibleDC(hDC);
 				HGDIOBJ hBitmap = SelectObject(tileDC, m_hBitmap[tile_type]);
 
-				StretchBlt(mDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
+				StretchBlt(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
 					tileDC, 0, 0, m_bmp[tile_type].bmWidth, m_bmp[tile_type].bmHeight, SRCCOPY);
 
 				SelectObject(tileDC, hBitmap);
 				DeleteDC(tileDC);
+
+				// Player
+				if ((map_x == player.m_x) && (map_y == player.m_y)) {
+					player.print(hDC, x, y);
+				}
 			}
 		}
 	}
@@ -112,6 +152,9 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 
 	switch (iMessage) {
 	case WM_CREATE:
+		player_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\pawn.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		GetObject(player_hBitmap[0], sizeof(BITMAP), &player_bmp[0]);
+
 		bg.m_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\white.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		bg.m_hBitmap[1] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\black.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		GetObject(bg.m_hBitmap[0], sizeof(BITMAP), &bg.m_bmp[0]);
@@ -172,14 +215,14 @@ void init_socket() {
 	if (SOCKET_ERROR == ret) { std::cout << "WSAConnect Failed : " << WSAGetLastError() << std::endl; }
 	else { std::cout << "WSAConnect Succeed" << std::endl; }
 
-	DWORD recv_bytes;
-	DWORD recv_flag = 0;
-	ret = WSARecv(g_socket, g_recv_over.m_wsabuf, 1, &recv_bytes, &recv_flag, &g_recv_over.m_over, recv_callback);
-
 	CS_LOGIN_PACKET p;
 	p.size = sizeof(CS_LOGIN_PACKET);
 	p.type = CS_LOGIN;
 	do_send(&p);
+
+	DWORD recv_bytes;
+	DWORD recv_flag = 0;
+	ret = WSARecv(g_socket, g_recv_over.m_wsabuf, 1, &recv_bytes, &recv_flag, &g_recv_over.m_over, recv_callback);
 }
 
 void do_send(void* buff) {
@@ -204,11 +247,18 @@ void process_packet(char* p) {
 	switch (packet_type) {
 	case SC_LOGIN_INFO:
 		SC_LOGIN_INFO_PACKET* s_p = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(p);
-		camera_x = s_p->x;
-		camera_y = s_p->y;
-		InvalidateRect(g_hWnd, NULL, FALSE);
+		player.m_x = s_p->x;
+		player.m_y = s_p->y;
+		player.m_id = s_p->id;
+		player.m_hp = s_p->hp;
+		player.m_max_hp = s_p->max_hp;
+		player.m_exp = s_p->exp;
+		player.m_level = s_p->level;
+		camera_x = player.m_x - (S_VISIBLE_TILES / 2);
+		camera_y = player.m_y - (S_VISIBLE_TILES / 2);
 		break;
 	}
+	InvalidateRect(g_hWnd, NULL, FALSE);
 }
 
 void recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, DWORD flags) {

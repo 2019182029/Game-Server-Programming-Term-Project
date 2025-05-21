@@ -160,7 +160,7 @@ void process_packet(int c_id, char* packet) {
 		s_p.hp = 10;
 		s_p.max_hp = 10;
 		s_p.exp = 0;
-		s_p.level = 1;
+		s_p.level = 0;
 		s_p.x = W_WIDTH / 2;
 		s_p.y = W_HEIGHT / 2;
 		client->do_send(&s_p);

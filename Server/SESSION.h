@@ -1,7 +1,7 @@
 #pragma once
 
 #include "WS2tcpip.h"
-
+#include "atomic"
 
 //////////////////////////////////////////////////
 // EXP_OVER
@@ -23,6 +23,7 @@ public:
 
 //////////////////////////////////////////////////
 // SESSION
+enum STATE { ST_ACCEPT, ST_INGAME, ST_CLOSE };
 class SESSION {
 public:
 	EXP_OVER m_recv_over{ IO_RECV };
@@ -31,9 +32,11 @@ public:
 	int m_remained;
 
 	int m_id;
+	std::atomic<STATE> m_state;
+
+	int m_x, m_y;
 
 public:
-	SESSION();
 	SESSION(int id, SOCKET c_socket);
 	~SESSION();
 
