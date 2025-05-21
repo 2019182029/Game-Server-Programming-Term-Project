@@ -176,6 +176,30 @@ void disconnect(int c_id) {
 	std::shared_ptr<SESSION> client = g_clients.at(c_id);
 	if (nullptr == client) return;
 
+	client->m_vl.lock();
+	std::unordered_set <int> vl = client->m_view_list;
+	client->m_vl.unlock();
+	for (auto& cl : vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) continue;
+
+		if (ST_INGAME != other->m_state) continue;
+		if (other->m_id == c_id) continue;
+
+		other->send_remove_object(c_id);
+	}
+
+	// Delete Client from Sector
+	int sx = client->m_x / SECTOR_WIDTH;
+	int sy = client->m_y / SECTOR_HEIGHT;
+
+	{
+		std::lock_guard<std::mutex> lock(g_mutex[sy][sx]);
+		g_sector[sy][sx].erase(c_id);
+	}
+	
+	client->m_state = ST_CLOSE;
+
 	g_clients.at(c_id) = nullptr;
 }
 
