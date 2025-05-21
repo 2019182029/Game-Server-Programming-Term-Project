@@ -152,18 +152,22 @@ void process_packet(int c_id, char* packet) {
 
 	switch (packet[1]) {
 	case CS_LOGIN: {
-		CS_LOGIN_PACKET* c_p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
-		SC_LOGIN_INFO_PACKET s_p;
-		s_p.size = sizeof(SC_LOGIN_INFO_PACKET);
-		s_p.type = SC_LOGIN_INFO;
-		s_p.id = c_id;
-		s_p.hp = 10;
-		s_p.max_hp = 10;
-		s_p.exp = 0;
-		s_p.level = 0;
-		s_p.x = W_WIDTH / 2;
-		s_p.y = W_HEIGHT / 2;
-		client->do_send(&s_p);
+		client->send_login_info();
+		break;
+	}
+
+	case CS_MOVE: {
+		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
+		short new_x = client->m_x;
+		short new_y = client->m_y;
+		switch (p->direction) {
+		case 0: --new_y; break;
+		case 1: ++new_y; break;
+		case 2: --new_x; break;
+		case 3: ++new_x; break;
+		}
+		if ((0 <= new_x) && (new_x < W_WIDTH)) { client->m_x = new_x; }
+		if ((0 <= new_y) && (new_y < W_HEIGHT)) { client->m_y = new_y; }
 		break;
 	}
 	}

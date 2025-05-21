@@ -31,10 +31,14 @@ public:
 	SOCKET m_c_socket;
 	int m_remained;
 
-	int m_id;
 	std::atomic<STATE> m_state;
 
-	int m_x, m_y;
+	short m_x, m_y;
+	int m_id;
+	int m_hp;
+	int m_max_hp;
+	int m_exp;
+	int m_level;
 
 public:
 	SESSION(int id, SOCKET c_socket);
@@ -42,4 +46,5 @@ public:
 
 	void do_recv();
 	void do_send(void* buff);
+	void send_login_info();
 };

@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include "SESSION.h"
+#include "..\protocol.h"
 
 //////////////////////////////////////////////////
 // EXP_OVER
@@ -24,6 +25,12 @@ EXP_OVER::~EXP_OVER() {
 SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
+
+	m_x = 0; m_y = 0;
+	m_hp = 10;
+	m_max_hp = 10;
+	m_exp = 0;
+	m_level = 0;
 }
 
 SESSION::~SESSION() {
@@ -61,4 +68,18 @@ void SESSION::do_send(void* buff) {
 			delete o;
 		}
 	}
+}
+
+void SESSION::send_login_info() {
+	SC_LOGIN_INFO_PACKET p;
+	p.size = sizeof(SC_LOGIN_INFO_PACKET);
+	p.type = SC_LOGIN_INFO;
+	p.x = m_x;
+	p.y = m_y;
+	p.id = m_id;
+	p.hp = m_hp;
+	p.max_hp = m_max_hp;
+	p.exp = m_exp;
+	p.level = m_level;
+	do_send(&p);
 }

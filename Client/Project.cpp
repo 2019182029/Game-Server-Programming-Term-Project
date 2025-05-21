@@ -41,6 +41,9 @@ void CALLBACK send_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, 
 HBITMAP player_hBitmap[5];
 BITMAP player_bmp[5];
 
+short camera_x = 0;
+short camera_y = 0;
+
 class PLAYER {
 public:
 	short m_x, m_y;
@@ -51,6 +54,21 @@ public:
 	int	m_level;
 
 public:
+	void update() {
+		camera_x = m_x - (S_VISIBLE_TILES / 2);
+		camera_y = m_y - (S_VISIBLE_TILES / 2);
+	}
+
+	void move(short dx, short dy) {
+		short new_x = m_x + dx;
+		short new_y = m_y + dy;
+
+		if ((0 <= new_x) && (new_x < W_WIDTH)) { m_x = new_x; }
+		if ((0 <= new_y) && (new_y < W_HEIGHT)) { m_y = new_y; }
+
+		update();
+	}
+
 	void print(HDC hDC, short x, short y) const {
 		HDC mDC = CreateCompatibleDC(hDC);
 		HGDIOBJ hBitmap = SelectObject(mDC, player_hBitmap[m_level]);
@@ -68,9 +86,6 @@ PLAYER player;
 //////////////////////////////////////////////////
 // Background
 char tile_map[W_WIDTH][W_HEIGHT];
-
-short camera_x = player.m_x - (S_VISIBLE_TILES / 2);
-short camera_y = player.m_y - (S_VISIBLE_TILES / 2);
 
 class BACKGROUND {
 public:
@@ -170,6 +185,27 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		init_socket();
 		break;
 
+	case WM_KEYDOWN: 
+		switch (wParam) {
+		case VK_UP:
+		case VK_DOWN:
+		case VK_LEFT:
+		case VK_RIGHT:
+			CS_MOVE_PACKET p;
+			p.size = sizeof(CS_MOVE_PACKET);
+			p.type = CS_MOVE;
+			switch (wParam) {
+			case VK_UP:    player.move(0, -1); p.direction = 0; break;
+			case VK_DOWN:  player.move(0,  1); p.direction = 1; break;
+			case VK_LEFT:  player.move(-1, 0); p.direction = 2; break;
+			case VK_RIGHT: player.move(1,  0); p.direction = 3; break;
+			}
+			do_send(&p);
+			InvalidateRect(g_hWnd, NULL, FALSE);
+			break;
+		}
+		break;
+
 	case WM_PAINT: {
 		hDC = BeginPaint(hWnd, &ps);
 		mDC = CreateCompatibleDC(hDC);
@@ -254,11 +290,10 @@ void process_packet(char* p) {
 		player.m_max_hp = s_p->max_hp;
 		player.m_exp = s_p->exp;
 		player.m_level = s_p->level;
-		camera_x = player.m_x - (S_VISIBLE_TILES / 2);
-		camera_y = player.m_y - (S_VISIBLE_TILES / 2);
+		player.update();
+		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
 	}
-	InvalidateRect(g_hWnd, NULL, FALSE);
 }
 
 void recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, DWORD flags) {
