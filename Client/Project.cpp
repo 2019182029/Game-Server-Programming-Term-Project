@@ -383,8 +383,11 @@ void process_packet(char* packet) {
 			player.m_y = p->y;
 			break;
 		}
-		others.at(p->id).m_x = p->x;
-		others.at(p->id).m_y = p->y;
+		
+		if (others.count(p->id)) {
+			others.at(p->id).m_x = p->x;
+			others.at(p->id).m_y = p->y;
+		}
 		break;
 	}
 

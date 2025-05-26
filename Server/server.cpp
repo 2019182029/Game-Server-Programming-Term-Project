@@ -515,6 +515,8 @@ void init_npc() {
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
 		std::shared_ptr<SESSION> p = std::make_shared<SESSION>(i);
 		p->m_state = ST_INGAME;
+		p->m_x = rand() % W_WIDTH;
+		p->m_y = rand() % W_HEIGHT;
 		p->m_level = 4;
 		g_clients.insert(std::make_pair(p->m_id, p));
 

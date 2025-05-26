@@ -5,7 +5,7 @@ constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 50000;
-constexpr int MAX_NPC = 1;
+constexpr int MAX_NPC = 200000;
 
 // Screen
 constexpr int S_WIDTH = 1000;
