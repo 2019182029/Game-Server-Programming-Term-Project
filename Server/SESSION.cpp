@@ -5,6 +5,9 @@
 
 concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
+std::priority_queue<event> timer_queue;
+std::mutex timer_lock;
+
 //////////////////////////////////////////////////
 // EXP_OVER
 EXP_OVER::EXP_OVER() {
@@ -152,7 +155,9 @@ void SESSION::send_remove_object(int c_id) {
 void SESSION::wake_up() {
 	bool expected = false;
 	if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
-
+		timer_lock.lock();
+		timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_MOVE });
+		timer_lock.unlock();
 	}
 }
 
@@ -160,6 +165,31 @@ void SESSION::sleep() {
 	m_is_active = false;
 }
 
-void SESSION::damage(int damage) {
-	m_hp -= damage;
+void SESSION::receive_damage(int damage) {
+	while (true) {
+		int hp = m_hp;
+
+		if (0 >= hp) { break; }
+
+		if (std::atomic_compare_exchange_strong(&m_hp, &hp, hp - damage)) {
+			if (0 >= (hp - damage)) {
+				m_state = ST_DIE;
+
+				sleep();
+
+				timer_lock.lock();
+				timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_DIE });
+				timer_lock.unlock();
+			}
+			break;
+		}
+	}
+}
+
+void SESSION::respawn() {
+	m_state = ST_INGAME;
+
+	m_x = 0;
+	m_y = 0;
+	m_hp = m_max_hp;
 }

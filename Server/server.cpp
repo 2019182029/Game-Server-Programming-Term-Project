@@ -1,17 +1,8 @@
-#include <WS2tcpip.h>
-#include <MSWSock.h>
-#include <thread>
-#include <array>
-#include <vector>
-#include <atomic>
-#include <iostream>
-
-#include "..\protocol.h"
 #include "SESSION.h"
+#include "..\protocol.h"
 
-#pragma comment (lib, "WS2_32.LIB")
-#pragma comment (lib, "MSWSock.LIB")
-
+//////////////////////////////////////////////////
+// IOCP
 constexpr short SERVER_PORT = 3000;
 
 HANDLE g_hIOCP;
@@ -20,26 +11,28 @@ EXP_OVER g_accept_over{ IO_ACCEPT };
 
 int g_new_id = 0;
 
-std::array<std::array<std::unordered_set<int>, SECTOR_COLS>, SECTOR_ROWS> g_sector;
-std::mutex g_mutex[SECTOR_ROWS][SECTOR_COLS];
-
-//////////////////////////////////////////////////
-// IOCP
 void worker();
 void disconnect(int c_id);
 void process_packet(int c_id, char* packet);
 
 //////////////////////////////////////////////////
 // VIEW
+std::array<std::array<std::unordered_set<int>, SECTOR_COLS>, SECTOR_ROWS> g_sector;
+std::mutex g_mutex[SECTOR_ROWS][SECTOR_COLS];
+
 bool can_see(int from, int to);
 void update_sector(int c_id, short old_x, short old_y, short new_x, short new_y);
-
 
 //////////////////////////////////////////////////
 // NPC
 void init_npc();
 bool is_player(int c_id);
 bool is_npc(int c_id);
+void do_npc_random_move(int c_id);
+
+//////////////////////////////////////////////////
+// TIMER
+void do_timer();
 
 //////////////////////////////////////////////////
 // MAIN
@@ -78,8 +71,11 @@ int main() {
 	std::vector <std::thread> workers;
 	for (unsigned int i = 0; i < std::thread::hardware_concurrency(); ++i)
 		workers.emplace_back(worker);
+	std::thread timer_thread(do_timer);
+
 	for (auto& w : workers)
 		w.join();
+	timer_thread.join();
 
 	closesocket(g_s_socket);
 	WSACleanup();
@@ -155,6 +151,124 @@ void worker() {
 			client->do_recv();
 			break;
 		}
+
+		case IO_NPC_MOVE: {
+			int npc_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+			if (nullptr == npc) break;
+
+			if (npc->m_is_active) {
+				do_npc_random_move(npc_id);
+			
+				timer_lock.lock();
+				timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_MOVE });
+				timer_lock.unlock();
+			}
+
+			delete eo;
+			break;
+		}
+
+		case IO_NPC_DIE: {
+			int npc_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+			if (nullptr == npc) break;
+
+			int sx = npc->m_x / SECTOR_WIDTH;
+			int sy = npc->m_y / SECTOR_HEIGHT;
+
+			// Create View List by Sector
+			std::unordered_set<int> near_list;
+			for (int dy = -1; dy <= 1; ++dy) {
+				for (int dx = -1; dx <= 1; ++dx) {
+					short nx = sx + dx;
+					short ny = sy + dy;
+
+					if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+					for (auto cl : g_sector[ny][nx]) {
+						std::shared_ptr<SESSION> other = g_clients.at(cl);
+						if (nullptr == other) { continue; }
+
+						if (ST_INGAME != other->m_state) { continue; }
+						if (other->m_id == npc->m_id) { continue; }
+						if (can_see(npc->m_id, other->m_id)) { near_list.insert(other->m_id); }
+					}
+				}
+			}
+
+			for (auto& cl : near_list) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) continue;
+
+				if (is_npc(cl)) continue;
+
+				if (ST_INGAME != other->m_state) continue;
+				if (other->m_id == npc->m_id) continue;
+
+				other->send_remove_object(npc->m_id);
+			}
+
+			// Delete Npc from Sector
+			{
+				std::lock_guard<std::mutex> lock(g_mutex[sy][sx]);
+				g_sector[sy][sx].erase(npc->m_id);
+			}
+
+			timer_lock.lock();
+			timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_RESPAWN });
+			timer_lock.unlock();
+
+			delete eo;
+			break;
+		}
+
+		case IO_NPC_RESPAWN: {
+			int npc_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+			if (nullptr == npc) break;
+
+			npc->respawn();
+
+			// Add Npc into Sector
+			short sx = npc->m_x / SECTOR_WIDTH;
+			short sy = npc->m_y / SECTOR_HEIGHT;
+			{
+				std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
+				g_sector[sy][sx].insert(npc_id);
+			}
+
+			// Search Nearby Objects by Sector
+			for (short dy = -1; dy <= 1; ++dy) {
+				for (short dx = -1; dx <= 1; ++dx) {
+					short nx = sx + dx;
+					short ny = sy + dy;
+
+					if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+					std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+					for (auto cl : g_sector[ny][nx]) {
+						std::shared_ptr<SESSION> other = g_clients.at(cl);
+						if (nullptr == other) { continue; }
+
+						if (ST_INGAME != other->m_state) { continue; }
+						if (other->m_id == npc_id) { continue; }
+						if (!can_see(npc_id, other->m_id)) { continue; }
+
+						if (is_player(other->m_id)) { 
+							other->send_add_object(npc_id);
+							npc->wake_up();
+						}
+					}
+				}
+			}
+
+			delete eo;
+			break;
+		}
 		}
 	}
 }
@@ -163,12 +277,16 @@ void disconnect(int c_id) {
 	std::shared_ptr<SESSION> client = g_clients.at(c_id);
 	if (nullptr == client) return;
 
+	client->m_state = ST_CLOSE;
+
 	client->m_vl.lock();
 	std::unordered_set <int> vl = client->m_view_list;
 	client->m_vl.unlock();
 	for (auto& cl : vl) {
 		std::shared_ptr<SESSION> other = g_clients.at(cl);
 		if (nullptr == other) continue;
+
+		if (is_npc(cl)) continue;
 
 		if (ST_INGAME != other->m_state) continue;
 		if (other->m_id == c_id) continue;
@@ -185,8 +303,6 @@ void disconnect(int c_id) {
 		g_sector[sy][sx].erase(c_id);
 	}
 	
-	client->m_state = ST_CLOSE;
-
 	g_clients.at(c_id) = nullptr;
 }
 
@@ -321,6 +437,7 @@ void process_packet(int c_id, char* packet) {
 		short y = client->m_y;
 		int level = client->m_level;
 
+		// Get Attacked Coords
 		std::vector<std::pair<short, short>> attacked_coords;
 		switch (level) {
 		case 0: 
@@ -328,30 +445,33 @@ void process_packet(int c_id, char* packet) {
 			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y - 1);
 			break;
 		}
-
+		
+		// Emplace Attacked Sectors into Ordered Set in order to Avoid Deadlock
 		std::set<std::pair<short, short>> attacked_sectors;
 		for (const auto& coord : attacked_coords) {
 			attacked_sectors.emplace(coord.first / SECTOR_WIDTH, coord.second / SECTOR_HEIGHT);
 		}
 
+		// Sector Lock
 		std::vector<std::unique_lock<std::mutex>> sector_locks; 
 		for (const auto& sector : attacked_sectors) {
 			sector_locks.emplace_back(g_mutex[sector.second][sector.first]);
 		}
 
+		// Damage Logic
 		for (const auto& sector : attacked_sectors) {
 			for (const auto& cl : g_sector[sector.second][sector.first]) {
-				std::shared_ptr<SESSION> other = g_clients.at(cl);
-				if (nullptr == other) continue;
+				std::shared_ptr<SESSION> npc = g_clients.at(cl);
+				if (nullptr == npc) continue;
 
-				if (ST_INGAME != other->m_state) { continue; }
-				if (other->m_id == c_id) { continue; }
-				if (!can_see(c_id, other->m_id)) { continue; }
+				if (ST_INGAME != npc->m_state) { continue; }
+				if (npc->m_id == c_id) { continue; }
+				if (!can_see(c_id, npc->m_id)) { continue; }
 
-				if (is_npc(other->m_id)) { 
+				if (is_npc(npc->m_id)) {
 					for (const auto& coord : attacked_coords) {
-						if ((coord.first == other->m_x) && (coord.second == other->m_y)) {
-							other->damage(1 + level);
+						if ((coord.first == npc->m_x) && (coord.second == npc->m_y)) {
+							npc->receive_damage(1 + level);
 						}
 					}
 				}
@@ -415,4 +535,155 @@ bool is_player(int c_id) {
 
 bool is_npc(int c_id) {
 	return !is_player(c_id);
+}
+
+void do_npc_random_move(int c_id) {
+	std::shared_ptr<SESSION> npc = g_clients.at(c_id);
+	if (nullptr == npc) return;
+
+	short old_x = npc->m_x;
+	short old_y = npc->m_y;
+	short new_x = old_x;
+	short new_y = old_y;
+
+	switch (rand() % 4) {
+	case 0: if (old_y > 0) --new_y; break;
+	case 1: if (old_y < W_HEIGHT - 1) ++new_y; break;
+	case 2: if (old_x > 0) --new_x; break;
+	case 3: if (old_x < W_WIDTH - 1) ++new_x; break;
+	}
+
+	npc->m_x = new_x;
+	npc->m_y = new_y;
+
+	// Update Sector
+	update_sector(c_id, old_x, old_y, new_x, new_y);
+
+	int sx = npc->m_x / SECTOR_WIDTH;
+	int sy = npc->m_y / SECTOR_HEIGHT;
+
+	// Create Old View List by Sector
+	std::unordered_set<int> old_vl;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			short nx = sx + dx;
+			short ny = sy + dy;
+
+			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+			for (auto cl : g_sector[ny][nx]) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) continue;
+
+				if (ST_INGAME != other->m_state) continue;
+				if (is_npc(other->m_id)) continue;
+				if (can_see(npc->m_id, other->m_id)) { old_vl.insert(other->m_id); }
+			}
+		}
+	}
+
+	// Create New View List by Sector
+	std::unordered_set<int> new_vl;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			short nx = sx + dx;
+			short ny = sy + dy;
+
+			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+			for (auto cl : g_sector[ny][nx]) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) continue;
+
+				if (ST_INGAME != other->m_state) continue;
+				if (is_npc(other->m_id)) continue;
+				if (can_see(npc->m_id, other->m_id)) { new_vl.insert(other->m_id); }
+			}
+		}
+	}
+
+	if (0 == new_vl.size()) {
+		npc->sleep();
+	} else {
+		for (auto cl : new_vl) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) return;
+
+			if (0 == old_vl.count(cl)) {
+				// 플레이어의 시야에 등장
+				other->send_add_object(npc->m_id);
+			}
+			else {
+				// 플레이어가 계속 보고 있음.
+				other->send_move_object(npc->m_id);
+			}
+		}
+	}
+
+	for (auto cl : old_vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) return;
+
+		if (0 == new_vl.count(cl)) {
+			other->m_vl.lock();
+			if (0 != other->m_view_list.count(npc->m_id)) {
+				other->m_vl.unlock();
+				other->send_remove_object(npc->m_id);
+			}
+			else {
+				other->m_vl.unlock();
+			}
+		}
+	}
+}
+
+void do_timer() {
+	while (true) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+		while (true) {
+			timer_lock.lock();
+			if (timer_queue.empty()) {
+				timer_lock.unlock();
+				break;
+			}
+
+			auto& k = timer_queue.top();
+
+			if (k.wakeup_time > std::chrono::high_resolution_clock::now()) {
+				timer_lock.unlock();
+				break;
+			}
+			timer_lock.unlock();
+
+			switch (k.event_id) {
+			case EV_MOVE: {
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_NPC_MOVE;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+				break;
+			}
+
+			case EV_DIE: {
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_NPC_DIE;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+				break;
+			}
+
+			case EV_RESPAWN: {
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_NPC_RESPAWN;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+				break;
+			}
+			}
+
+			timer_lock.lock();
+			timer_queue.pop();
+			timer_lock.unlock();
+		}
+	}
 }

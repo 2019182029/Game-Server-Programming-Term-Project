@@ -1,20 +1,45 @@
 #pragma once
 
-#include "WS2tcpip.h"
-#include "atomic"
-#include "set"
-#include "unordered_set"
-#include "mutex"
+#include <WS2tcpip.h>
+#include <MSWSock.h>
+
+#include <mutex>
+#include <thread>
+#include <iostream>
+
+#include <set>
+#include <array>
+#include <queue>
+#include <vector>
+#include <atomic>
+#include <unordered_set>
 #include <concurrent_unordered_map.h>
+
+#pragma comment (lib, "WS2_32.LIB")
+#pragma comment (lib, "MSWSock.LIB")
 
 class EXP_OVER;
 class SESSION;
 
 extern concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
+enum EVENT_TYPE { EV_MOVE, EV_DIE, EV_RESPAWN };
+struct event {
+	int obj_id;
+	std::chrono::high_resolution_clock::time_point wakeup_time;
+	EVENT_TYPE event_id;
+
+	constexpr bool operator < (const event& _Left) const {
+		return (wakeup_time > _Left.wakeup_time);
+	}
+};
+
+extern std::priority_queue<event> timer_queue;
+extern std::mutex timer_lock;
+
 //////////////////////////////////////////////////
 // EXP_OVER
-enum IO_TYPE { IO_ACCEPT, IO_SEND, IO_RECV };
+enum IO_TYPE { IO_ACCEPT, IO_SEND, IO_RECV, IO_NPC_MOVE, IO_NPC_DIE, IO_NPC_RESPAWN };
 class EXP_OVER {
 public:
 	WSAOVERLAPPED m_over;
@@ -32,7 +57,7 @@ public:
 
 //////////////////////////////////////////////////
 // SESSION
-enum STATE { ST_ACCEPT, ST_INGAME, ST_CLOSE };
+enum STATE { ST_ACCEPT, ST_INGAME, ST_CLOSE, ST_DIE };
 class SESSION {
 public:
 	EXP_OVER m_recv_over{ IO_RECV };
@@ -70,5 +95,6 @@ public:
 	void wake_up();
 	void sleep();
 
-	void damage(int damage);
+	void receive_damage(int damage);
+	void respawn();
 };
