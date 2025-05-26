@@ -39,8 +39,8 @@ void CALLBACK send_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, 
 
 //////////////////////////////////////////////////
 // Player
-HBITMAP player_hBitmap[5];
-BITMAP player_bmp[5];
+HBITMAP player_hBitmap[6];
+BITMAP player_bmp[6];
 
 short camera_x = 0;
 short camera_y = 0;
@@ -52,8 +52,19 @@ public:
 	int	m_hp; int m_max_hp;
 	int	m_exp; int m_level;
 
+	bool m_is_attacking;
+
 public:
-	void update() {
+	PLAYER() {
+		m_id = -1;
+		m_x = 0; m_y = 0;
+		m_hp = 10; m_max_hp = 10;
+		m_exp = 0; m_level = 0;
+
+		m_is_attacking = false;
+	}
+
+	void update_camera() {
 		camera_x = m_x - (S_VISIBLE_TILES / 2);
 		camera_y = m_y - (S_VISIBLE_TILES / 2);
 	}
@@ -65,8 +76,31 @@ public:
 		if ((0 <= new_x) && (new_x < W_WIDTH)) { m_x = new_x; }
 		if ((0 <= new_y) && (new_y < W_HEIGHT)) { m_y = new_y; }
 
-		update();
+		update_camera();
 	}
+
+	void attack(HDC hDC, short x, short y) const {
+		HDC mDC = CreateCompatibleDC(hDC);
+		HBITMAP hBmp = CreateCompatibleBitmap(hDC, S_TILE_WIDTH, S_TILE_HEIGHT);
+		HGDIOBJ oldBmp = SelectObject(mDC, hBmp);
+
+		HBRUSH redBrush = CreateSolidBrush(RGB(255, 0, 0));
+		RECT rect = { 0, 0, S_TILE_WIDTH, S_TILE_HEIGHT };
+		FillRect(mDC, &rect, redBrush);
+		DeleteObject(redBrush);
+
+		BLENDFUNCTION blend = {};
+		blend.BlendOp = AC_SRC_OVER;
+		blend.SourceConstantAlpha = 128;
+		blend.AlphaFormat = 0;
+
+		AlphaBlend(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
+			mDC, 0, 0, S_TILE_WIDTH, S_TILE_HEIGHT, blend);
+
+		SelectObject(mDC, oldBmp);
+		DeleteObject(hBmp);
+		DeleteDC(mDC);
+	};
 
 	void print(HDC hDC, short x, short y) const {
 		HDC mDC = CreateCompatibleDC(hDC);
@@ -74,6 +108,15 @@ public:
 
 		TransparentBlt(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
 			mDC, 0, 0, player_bmp[m_level].bmWidth, player_bmp[m_level].bmHeight, RGB(255, 255, 255));
+
+		if (m_is_attacking) {
+			switch (m_level) {
+			case 0:
+				attack(hDC, x - 1, y - 1);
+				attack(hDC, x + 1, y - 1);
+				break;
+			}
+		}
 
 		SelectObject(mDC, hBitmap);
 		DeleteDC(mDC);
@@ -112,16 +155,16 @@ public:
 				SelectObject(tileDC, hBitmap);
 				DeleteDC(tileDC);
 
-				// Player
-				if ((map_x == player.m_x) && (map_y == player.m_y)) {
-					player.print(hDC, x, y);
-				}
-
 				// Others
 				for (const auto& other : others) {
 					if ((map_x == other.second.m_x) && (map_y == other.second.m_y)) {
 						other.second.print(hDC, x, y);
 					}
+				}
+
+				// Player
+				if ((map_x == player.m_x) && (map_y == player.m_y)) {
+					player.print(hDC, x, y);
 				}
 			}
 		}
@@ -175,7 +218,9 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 	switch (iMessage) {
 	case WM_CREATE:
 		player_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\pawn.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		player_hBitmap[4] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\knight.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		GetObject(player_hBitmap[0], sizeof(BITMAP), &player_bmp[0]);
+		GetObject(player_hBitmap[4], sizeof(BITMAP), &player_bmp[4]);
 
 		bg.m_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\white.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		bg.m_hBitmap[1] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\black.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
@@ -197,20 +242,39 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		case VK_UP:
 		case VK_DOWN:
 		case VK_LEFT:
-		case VK_RIGHT:
+		case VK_RIGHT: {
 			CS_MOVE_PACKET p;
 			p.size = sizeof(CS_MOVE_PACKET);
 			p.type = CS_MOVE;
 			switch (wParam) {
 			case VK_UP:    player.move(0, -1); p.direction = 0; break;
-			case VK_DOWN:  player.move(0,  1); p.direction = 1; break;
+			case VK_DOWN:  player.move(0, 1); p.direction = 1; break;
 			case VK_LEFT:  player.move(-1, 0); p.direction = 2; break;
-			case VK_RIGHT: player.move(1,  0); p.direction = 3; break;
+			case VK_RIGHT: player.move(1, 0); p.direction = 3; break;
 			}
 			do_send(&p);
-			InvalidateRect(g_hWnd, NULL, FALSE);
 			break;
 		}
+
+		case VK_SPACE: {
+			CS_ATTACK_PACKET p;
+			p.size = sizeof(CS_ATTACK_PACKET);
+			p.type = CS_ATTACK;
+			player.m_is_attacking = true;
+			do_send(&p);
+			break;
+		}
+		}
+		InvalidateRect(g_hWnd, NULL, FALSE);
+		break;
+
+	case WM_KEYUP:
+		switch (wParam) {
+		case VK_SPACE: 
+			player.m_is_attacking = false;
+			break;
+		}
+		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
 
 	case WM_PAINT: {
@@ -297,7 +361,7 @@ void process_packet(char* packet) {
 		player.m_max_hp = p->max_hp;
 		player.m_exp = p->exp;
 		player.m_level = p->level;
-		player.update();
+		player.update_camera();
 		break;
 	}
 

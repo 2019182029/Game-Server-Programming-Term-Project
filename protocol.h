@@ -5,7 +5,7 @@ constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 50000;
-constexpr int MAX_NPC = 200000;
+constexpr int MAX_NPC = 1;
 
 // Screen
 constexpr int S_WIDTH = 1000;
@@ -68,6 +68,11 @@ struct CS_CHAT_PACKET {
 };
 
 struct CS_TELEPORT_PACKET {
+	unsigned char size;
+	char	type;
+};
+
+struct CS_ATTACK_PACKET {
 	unsigned char size;
 	char	type;
 };

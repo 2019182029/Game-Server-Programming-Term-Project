@@ -2,6 +2,7 @@
 
 #include "WS2tcpip.h"
 #include "atomic"
+#include "set"
 #include "unordered_set"
 #include "mutex"
 #include <concurrent_unordered_map.h>
@@ -45,19 +46,29 @@ public:
 
 	short m_x, m_y;
 	int m_id;
-	int m_hp;
+	std::atomic<int> m_hp;
 	int m_max_hp;
-	int m_exp;
-	int m_level;
+	std::atomic<int> m_exp;
+	std::atomic<int> m_level;
+
+	std::atomic<bool> m_is_active;
 
 public:
+	SESSION();
+	SESSION(int id);
 	SESSION(int id, SOCKET c_socket);
 	~SESSION();
 
 	void do_recv();
 	void do_send(void* buff);
+
 	void send_login_info();
 	void send_add_object(int c_id);
 	void send_move_object(int c_id);
 	void send_remove_object(int c_id);
+
+	void wake_up();
+	void sleep();
+
+	void damage(int damage);
 };

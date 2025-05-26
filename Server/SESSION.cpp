@@ -24,6 +24,20 @@ EXP_OVER::~EXP_OVER() {
 
 //////////////////////////////////////////////////
 // SESSION
+SESSION::SESSION() {
+
+}
+
+SESSION::SESSION(int id) : m_id(id) {
+	m_x = 0; m_y = 0;
+	m_hp = 10;
+	m_max_hp = 10;
+	m_exp = 0;
+	m_level = 0;
+
+	m_is_active = false;
+}
+
 SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
@@ -33,6 +47,8 @@ SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_max_hp = 10;
 	m_exp = 0;
 	m_level = 0;
+
+	m_is_active = false;
 }
 
 SESSION::~SESSION() {
@@ -131,4 +147,19 @@ void SESSION::send_remove_object(int c_id) {
 	p.type = SC_REMOVE_OBJECT;
 	p.id = c_id;
 	do_send(&p);
+}
+
+void SESSION::wake_up() {
+	bool expected = false;
+	if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
+
+	}
+}
+
+void SESSION::sleep() {
+	m_is_active = false;
+}
+
+void SESSION::damage(int damage) {
+	m_hp -= damage;
 }
