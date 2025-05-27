@@ -152,6 +152,38 @@ void worker() {
 			break;
 		}
 
+		case IO_PLAYER_KILLED_NPC: {
+			int cliend_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> client = g_clients.at(cliend_id);
+			if (nullptr == client) break;
+
+			int exp = 0;
+			bool level_up = client->earn_exp(exp);
+
+			// Send Earn Exp Packet to Player
+			client->send_earn_exp(exp);
+			
+			if (level_up) { 
+				// Create View List by Sector
+				client->m_vl.lock();
+				std::unordered_set<int> vlist = client->m_view_list;
+				client->m_vl.unlock();
+
+				client->send_level_up(key); 
+
+				for (auto& cl : vlist) {
+					std::shared_ptr<SESSION> other = g_clients.at(cl);
+					if (nullptr == other) continue;
+
+					if (is_player(cl)) {
+						other->send_level_up(key);
+					}
+				}
+			}
+			break;
+		}
+
 		case IO_NPC_MOVE: {
 			int npc_id = static_cast<int>(key);
 
@@ -162,7 +194,7 @@ void worker() {
 				do_npc_random_move(npc_id);
 			
 				timer_lock.lock();
-				timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_MOVE });
+				timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE, -1 });
 				timer_lock.unlock();
 			}
 
@@ -218,7 +250,7 @@ void worker() {
 			}
 
 			timer_lock.lock();
-			timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_RESPAWN });
+			timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_NPC_RESPAWN, -1 });
 			timer_lock.unlock();
 
 			delete eo;
@@ -444,6 +476,33 @@ void process_packet(int c_id, char* packet) {
 			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x - 1, y - 1);
 			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y - 1);
 			break;
+
+		case 1:
+			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x - 1, y - 1);
+			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y - 1);
+			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y + 1 && y + 1 < W_HEIGHT) attacked_coords.emplace_back(x - 1, y + 1);
+			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y + 1 && y + 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y + 1);
+			break;
+
+		case 2:
+			if (0 <= x && x < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x, y - 1);
+			if (0 <= x && x < W_WIDTH && 0 <= y + 1 && y + 1 < W_HEIGHT) attacked_coords.emplace_back(x, y + 1);
+			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y && y < W_HEIGHT) attacked_coords.emplace_back(x - 1, y);
+			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y && y < W_HEIGHT) attacked_coords.emplace_back(x + 1, y);
+			break;
+
+		case 3:
+			for (int dy = -1; dy <= 1; ++dy) {
+				for (int dx = -1; dx <= 1; ++dx) {
+					if (dx == 0 && dy == 0) { continue; }
+
+					int nx = x + dx;
+					int ny = y + dy;
+
+					if (0 <= nx && nx < W_WIDTH && 0 <= ny && ny < W_HEIGHT) attacked_coords.emplace_back(nx, ny);
+				}
+			}
+			break;
 		}
 		
 		// Emplace Attacked Sectors into Ordered Set in order to Avoid Deadlock
@@ -471,7 +530,7 @@ void process_packet(int c_id, char* packet) {
 				if (is_npc(npc->m_id)) {
 					for (const auto& coord : attacked_coords) {
 						if ((coord.first == npc->m_x) && (coord.second == npc->m_y)) {
-							npc->receive_damage(1 + level);
+							npc->receive_damage(1 + level, c_id);
 						}
 					}
 				}
@@ -555,16 +614,11 @@ void do_npc_random_move(int c_id) {
 	case 3: if (old_x < W_WIDTH - 1) ++new_x; break;
 	}
 
-	npc->m_x = new_x;
-	npc->m_y = new_y;
-
-	// Update Sector
-	update_sector(c_id, old_x, old_y, new_x, new_y);
-
 	int sx = npc->m_x / SECTOR_WIDTH;
 	int sy = npc->m_y / SECTOR_HEIGHT;
 
 	// Create Old View List by Sector
+	bool keep_alive = false;
 	std::unordered_set<int> old_vl;
 	for (int dy = -1; dy <= 1; ++dy) {
 		for (int dx = -1; dx <= 1; ++dx) {
@@ -580,10 +634,27 @@ void do_npc_random_move(int c_id) {
 
 				if (ST_INGAME != other->m_state) continue;
 				if (is_npc(other->m_id)) continue;
-				if (can_see(npc->m_id, other->m_id)) { old_vl.insert(other->m_id); }
+				if (can_see(npc->m_id, other->m_id)) { 
+					keep_alive = true;
+					old_vl.insert(other->m_id); 
+				}
 			}
 		}
 	}
+
+	if (false == keep_alive) {
+		npc->sleep();
+		return;
+	}
+
+	npc->m_x = new_x;
+	npc->m_y = new_y;
+
+	sx = npc->m_x / SECTOR_WIDTH;
+	sy = npc->m_y / SECTOR_HEIGHT;
+
+	// Update Sector
+	update_sector(c_id, old_x, old_y, new_x, new_y);
 
 	// Create New View List by Sector
 	std::unordered_set<int> new_vl;
@@ -606,21 +677,17 @@ void do_npc_random_move(int c_id) {
 		}
 	}
 
-	if (0 == new_vl.size()) {
-		npc->sleep();
-	} else {
-		for (auto cl : new_vl) {
-			std::shared_ptr<SESSION> other = g_clients.at(cl);
-			if (nullptr == other) return;
+	for (auto cl : new_vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) return;
 
-			if (0 == old_vl.count(cl)) {
-				// 플레이어의 시야에 등장
-				other->send_add_object(npc->m_id);
-			}
-			else {
-				// 플레이어가 계속 보고 있음.
-				other->send_move_object(npc->m_id);
-			}
+		if (0 == old_vl.count(cl)) {
+			// 플레이어의 시야에 등장
+			other->send_add_object(npc->m_id);
+		}
+		else {
+			// 플레이어가 계속 보고 있음.
+			other->send_move_object(npc->m_id);
 		}
 	}
 
@@ -661,21 +728,25 @@ void do_timer() {
 			timer_lock.unlock();
 
 			switch (k.event_id) {
-			case EV_MOVE: {
+			case EV_NPC_MOVE: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_NPC_MOVE;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 				break;
 			}
 
-			case EV_DIE: {
+			case EV_NPC_DIE: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_NPC_DIE;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+
+				o = new EXP_OVER;
+				o->m_io_type = IO_PLAYER_KILLED_NPC;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.other_id, &o->m_over);
 				break;
 			}
 
-			case EV_RESPAWN: {
+			case EV_NPC_RESPAWN: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_NPC_RESPAWN;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);

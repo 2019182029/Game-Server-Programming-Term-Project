@@ -23,11 +23,15 @@ class SESSION;
 
 extern concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
-enum EVENT_TYPE { EV_MOVE, EV_DIE, EV_RESPAWN };
+enum EVENT_TYPE { 
+	EV_NPC_MOVE, EV_NPC_DIE, EV_NPC_RESPAWN 
+};
+
 struct event {
 	int obj_id;
 	std::chrono::high_resolution_clock::time_point wakeup_time;
 	EVENT_TYPE event_id;
+	int other_id;
 
 	constexpr bool operator < (const event& _Left) const {
 		return (wakeup_time > _Left.wakeup_time);
@@ -39,7 +43,12 @@ extern std::mutex timer_lock;
 
 //////////////////////////////////////////////////
 // EXP_OVER
-enum IO_TYPE { IO_ACCEPT, IO_SEND, IO_RECV, IO_NPC_MOVE, IO_NPC_DIE, IO_NPC_RESPAWN };
+enum IO_TYPE { 
+	IO_ACCEPT, IO_SEND, IO_RECV, 
+	IO_PLAYER_KILLED_NPC,
+	IO_NPC_MOVE, IO_NPC_DIE, IO_NPC_RESPAWN 
+};
+
 class EXP_OVER {
 public:
 	WSAOVERLAPPED m_over;
@@ -74,7 +83,7 @@ public:
 	std::atomic<int> m_hp;
 	int m_max_hp;
 	std::atomic<int> m_exp;
-	std::atomic<int> m_level;
+	int m_level;
 
 	std::atomic<bool> m_is_active;
 
@@ -92,9 +101,12 @@ public:
 	void send_move_object(int c_id);
 	void send_remove_object(int c_id);
 
+	bool earn_exp(int& exp);
+	void send_earn_exp(int exp);
+	void send_level_up(int c_id);
+
 	void wake_up();
 	void sleep();
-
-	void receive_damage(int damage);
+	void receive_damage(int damage, int attacker_id);
 	void respawn();
 };

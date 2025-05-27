@@ -152,12 +152,53 @@ void SESSION::send_remove_object(int c_id) {
 	do_send(&p);
 }
 
+bool SESSION::earn_exp(int& exp) {
+	while (true) {
+		int expected = m_exp;
+
+		if (std::atomic_compare_exchange_strong(&m_exp, &expected, expected + 10)) {
+			if (0 == (expected + 10) % 100) {
+				exp = expected + 10;
+
+				if (m_level < 3) {
+					++m_level;
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+}
+
+void SESSION::send_earn_exp(int exp) {
+	SC_EARN_EXP_PACKET p;
+	p.size = sizeof(SC_EARN_EXP_PACKET);
+	p.type = SC_EARN_EXP;
+	p.exp = exp;
+	do_send(&p);
+}
+
+void SESSION::send_level_up(int c_id) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	SC_LEVEL_UP_PACKET p;
+	p.size = sizeof(SC_LEVEL_UP_PACKET);
+	p.type = SC_LEVEL_UP;
+	p.id = c_id;
+	p.level = client->m_level;
+	do_send(&p);
+}
+
 void SESSION::wake_up() {
-	bool expected = false;
-	if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
-		timer_lock.lock();
-		timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_MOVE });
-		timer_lock.unlock();
+	if (!m_is_active) {
+		bool expected = false;
+
+		if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
+			timer_lock.lock();
+			timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE, -1 });
+			timer_lock.unlock();
+		}
 	}
 }
 
@@ -165,7 +206,7 @@ void SESSION::sleep() {
 	m_is_active = false;
 }
 
-void SESSION::receive_damage(int damage) {
+void SESSION::receive_damage(int damage, int attacker_id) {
 	while (true) {
 		int hp = m_hp;
 
@@ -178,7 +219,7 @@ void SESSION::receive_damage(int damage) {
 				sleep();
 
 				timer_lock.lock();
-				timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_DIE });
+				timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE, attacker_id });
 				timer_lock.unlock();
 			}
 			break;

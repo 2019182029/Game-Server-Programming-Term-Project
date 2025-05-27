@@ -115,6 +115,31 @@ public:
 				attack(hDC, x - 1, y - 1);
 				attack(hDC, x + 1, y - 1);
 				break;
+
+			case 1:
+				attack(hDC, x - 1, y - 1);
+				attack(hDC, x + 1, y - 1);
+				attack(hDC, x - 1, y + 1);
+				attack(hDC, x + 1, y + 1);
+				break;
+
+			case 2:
+				attack(hDC, x, y - 1);
+				attack(hDC, x, y + 1);
+				attack(hDC, x - 1, y);
+				attack(hDC, x + 1, y);
+				break;
+
+			case 3:
+				attack(hDC, x - 1, y - 1);
+				attack(hDC, x, y - 1);
+				attack(hDC, x + 1, y - 1);
+				attack(hDC, x - 1, y);
+				attack(hDC, x + 1, y);
+				attack(hDC, x - 1, y + 1);
+				attack(hDC, x, y + 1);
+				attack(hDC, x + 1, y + 1);
+				break;
 			}
 		}
 
@@ -154,6 +179,15 @@ public:
 
 				SelectObject(tileDC, hBitmap);
 				DeleteDC(tileDC);
+
+				
+			}
+		}
+
+		for (short y = 0; y < S_VISIBLE_TILES; ++y) {
+			for (short x = 0; x < S_VISIBLE_TILES; ++x) {
+				short map_x = camera_x + x;
+				short map_y = camera_y + y;
 
 				// Others
 				for (const auto& other : others) {
@@ -218,8 +252,14 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 	switch (iMessage) {
 	case WM_CREATE:
 		player_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\pawn.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		player_hBitmap[1] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\bishop.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		player_hBitmap[2] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\rook.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		player_hBitmap[3] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\king.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		player_hBitmap[4] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\knight.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		GetObject(player_hBitmap[0], sizeof(BITMAP), &player_bmp[0]);
+		GetObject(player_hBitmap[1], sizeof(BITMAP), &player_bmp[1]);
+		GetObject(player_hBitmap[2], sizeof(BITMAP), &player_bmp[2]);
+		GetObject(player_hBitmap[3], sizeof(BITMAP), &player_bmp[3]);
 		GetObject(player_hBitmap[4], sizeof(BITMAP), &player_bmp[4]);
 
 		bg.m_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\white.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
@@ -394,6 +434,27 @@ void process_packet(char* packet) {
 	case SC_REMOVE_OBJECT: {
 		SC_REMOVE_OBJECT_PACKET* p = reinterpret_cast<SC_REMOVE_OBJECT_PACKET*>(packet);
 		others.erase(p->id);
+		break;
+	}
+
+	case SC_EARN_EXP: {
+		SC_EARN_EXP_PACKET* p = reinterpret_cast<SC_EARN_EXP_PACKET*>(packet);
+		player.m_exp = p->exp;
+		break;
+	}
+
+	case SC_LEVEL_UP: {
+		SC_LEVEL_UP_PACKET* p = reinterpret_cast<SC_LEVEL_UP_PACKET*>(packet);
+		if (player.m_id == p->id) {
+			player.m_level = p->level;
+			break;
+		}
+
+		std::cout << p->id << std::endl;
+		if (others.count(p->id)) {
+			others.at(p->id).m_level = p->level;
+			std::cout << p->id << " level up to " << p->level << others.at(p->id).m_level << std::endl;
+		}
 		break;
 	}
 	}
