@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <iostream>
 
 #include "SESSION.h"
@@ -102,6 +104,7 @@ void SESSION::send_login_info() {
 	p.max_hp = m_max_hp;
 	p.exp = m_exp;
 	p.level = m_level;
+	
 	do_send(&p);
 }
 
@@ -116,6 +119,7 @@ void SESSION::send_add_object(int c_id) {
 	p.x = client->m_x;
 	p.y = client->m_y;
 	p.level = client->m_level;
+	strcpy(p.name, client->m_name);
 	m_vl.lock();
 	m_view_list.insert(c_id);
 	m_vl.unlock();
@@ -156,10 +160,10 @@ bool SESSION::earn_exp(int& exp) {
 	while (true) {
 		int expected = m_exp;
 
-		if (std::atomic_compare_exchange_strong(&m_exp, &expected, expected + 10)) {
-			if (0 == (expected + 10) % 100) {
-				exp = expected + 10;
+		if (std::atomic_compare_exchange_strong(&m_exp, &expected, expected + 50)) {
+			exp = expected + 50;
 
+			if (0 == (exp % 100)) {
 				if (m_level < 3) {
 					++m_level;
 					return true;

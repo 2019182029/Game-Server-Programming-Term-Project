@@ -1,5 +1,6 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "SESSION.h"
-#include "..\protocol.h"
 
 //////////////////////////////////////////////////
 // IOCP
@@ -152,7 +153,7 @@ void worker() {
 			break;
 		}
 
-		case IO_PLAYER_KILLED_NPC: {
+		case IO_PLAYER_KILL_NPC: {
 			int cliend_id = static_cast<int>(key);
 
 			std::shared_ptr<SESSION> client = g_clients.at(cliend_id);
@@ -181,6 +182,8 @@ void worker() {
 					}
 				}
 			}
+
+			delete eo;
 			break;
 		}
 
@@ -344,8 +347,10 @@ void process_packet(int c_id, char* packet) {
 
 	switch (packet[1]) {
 	case CS_LOGIN: {
-		client->m_state = ST_INGAME;
+		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 
+		strcpy(client->m_name, p->name);
+		client->m_state = ST_INGAME;
 		client->send_login_info();
 
 		// Add Client into Sector
@@ -577,6 +582,7 @@ void init_npc() {
 		p->m_x = rand() % W_WIDTH;
 		p->m_y = rand() % W_HEIGHT;
 		p->m_level = 4;
+		snprintf(p->m_name, sizeof(p->m_name), "Npc %d", i);
 		g_clients.insert(std::make_pair(p->m_id, p));
 
 		// Add Npc into Sector
@@ -741,7 +747,7 @@ void do_timer() {
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 
 				o = new EXP_OVER;
-				o->m_io_type = IO_PLAYER_KILLED_NPC;
+				o->m_io_type = IO_PLAYER_KILL_NPC;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.other_id, &o->m_over);
 				break;
 			}

@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <WS2tcpip.h>
 #include <windows.h>
 #include <tchar.h>
@@ -45,12 +47,15 @@ BITMAP player_bmp[6];
 short camera_x = 0;
 short camera_y = 0;
 
+void print_ui(HDC hDC);
+
 class PLAYER {
 public:
 	int	m_id;
 	short m_x, m_y;
 	int	m_hp; int m_max_hp;
 	int	m_exp; int m_level;
+	char m_name[NAME_SIZE];
 
 	bool m_is_attacking;
 
@@ -79,7 +84,7 @@ public:
 		update_camera();
 	}
 
-	void attack(HDC hDC, short x, short y) const {
+	void visualize_attack(HDC hDC, short x, short y) const {
 		HDC mDC = CreateCompatibleDC(hDC);
 		HBITMAP hBmp = CreateCompatibleBitmap(hDC, S_TILE_WIDTH, S_TILE_HEIGHT);
 		HGDIOBJ oldBmp = SelectObject(mDC, hBmp);
@@ -106,39 +111,53 @@ public:
 		HDC mDC = CreateCompatibleDC(hDC);
 		HGDIOBJ hBitmap = SelectObject(mDC, player_hBitmap[m_level]);
 
+		// Character
 		TransparentBlt(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
 			mDC, 0, 0, player_bmp[m_level].bmWidth, player_bmp[m_level].bmHeight, RGB(255, 255, 255));
 
+		// Name
+		SetBkMode(hDC, TRANSPARENT);
+		SetTextColor(hDC, RGB(255, 255, 255)); 
+
+		RECT nameRect;
+		nameRect.top = (y - 1) * S_TILE_HEIGHT;
+		nameRect.bottom = (y + 1) * S_TILE_HEIGHT;
+		nameRect.left = (x - 1) * S_TILE_WIDTH;
+		nameRect.right = (x + 2) * S_TILE_WIDTH;
+
+		DrawTextA(hDC, m_name, -1, &nameRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+		// Visualize Attack
 		if (m_is_attacking) {
 			switch (m_level) {
 			case 0:
-				attack(hDC, x - 1, y - 1);
-				attack(hDC, x + 1, y - 1);
+				visualize_attack(hDC, x - 1, y - 1);
+				visualize_attack(hDC, x + 1, y - 1);
 				break;
 
 			case 1:
-				attack(hDC, x - 1, y - 1);
-				attack(hDC, x + 1, y - 1);
-				attack(hDC, x - 1, y + 1);
-				attack(hDC, x + 1, y + 1);
+				visualize_attack(hDC, x - 1, y - 1);
+				visualize_attack(hDC, x + 1, y - 1);
+				visualize_attack(hDC, x - 1, y + 1);
+				visualize_attack(hDC, x + 1, y + 1);
 				break;
 
 			case 2:
-				attack(hDC, x, y - 1);
-				attack(hDC, x, y + 1);
-				attack(hDC, x - 1, y);
-				attack(hDC, x + 1, y);
+				visualize_attack(hDC, x, y - 1);
+				visualize_attack(hDC, x, y + 1);
+				visualize_attack(hDC, x - 1, y);
+				visualize_attack(hDC, x + 1, y);
 				break;
 
 			case 3:
-				attack(hDC, x - 1, y - 1);
-				attack(hDC, x, y - 1);
-				attack(hDC, x + 1, y - 1);
-				attack(hDC, x - 1, y);
-				attack(hDC, x + 1, y);
-				attack(hDC, x - 1, y + 1);
-				attack(hDC, x, y + 1);
-				attack(hDC, x + 1, y + 1);
+				visualize_attack(hDC, x - 1, y - 1);
+				visualize_attack(hDC, x, y - 1);
+				visualize_attack(hDC, x + 1, y - 1);
+				visualize_attack(hDC, x - 1, y);
+				visualize_attack(hDC, x + 1, y);
+				visualize_attack(hDC, x - 1, y + 1);
+				visualize_attack(hDC, x, y + 1);
+				visualize_attack(hDC, x + 1, y + 1);
 				break;
 			}
 		}
@@ -150,6 +169,51 @@ public:
 
 PLAYER player;
 std::unordered_map<int, PLAYER> others;
+
+HPEN cPen, hpPen, ePen;
+HBRUSH rBrush, gBrush, wBrush;
+
+void print_ui(HDC hDC) {
+	HDC mDC = CreateCompatibleDC(hDC);
+	HGDIOBJ hBitmap = SelectObject(mDC, player_hBitmap[player.m_level]);
+
+	// Character
+	HPEN oldPen = (HPEN)SelectObject(hDC, cPen);
+	HBRUSH oldBrush = (HBRUSH)SelectObject(hDC, wBrush);
+	RoundRect(hDC, 5, 5, 5 + 100, 5 + 100, 10, 10);
+	TransparentBlt(hDC, 5, 5, 100, 100,
+		mDC, 0, 0, player_bmp[player.m_level].bmWidth, player_bmp[player.m_level].bmHeight, RGB(255, 255, 255));
+
+	// Hp
+	SelectObject(hDC, hpPen);
+	SelectObject(hDC, rBrush);
+	for (int i = 0; i < player.m_hp; ++i) {
+		Rectangle(hDC, 110 + 25 * i, 5,
+			110 + 25 * (i + 1), 25);
+	}
+
+	// Exp
+	SelectObject(hDC, ePen);
+	SelectObject(hDC, gBrush);
+	if (3 != player.m_level) {
+		float current_exp = (player.m_exp % 100) / 100.0f;
+		Rectangle(hDC, 110, 35,
+			110 + static_cast<int>(current_exp * 250), 60);
+
+		SelectObject(hDC, wBrush);
+		Rectangle(hDC, 110 + static_cast<int>(current_exp * 250), 35,
+			110 + 250, 60);
+	} else {
+		Rectangle(hDC, 110, 35,
+			110 + 250, 60);
+	}
+
+	SelectObject(hDC, oldPen);
+	SelectObject(hDC, oldBrush);
+
+	SelectObject(mDC, hBitmap);
+	DeleteDC(mDC);
+}
 
 //////////////////////////////////////////////////
 // Background
@@ -251,6 +315,14 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 
 	switch (iMessage) {
 	case WM_CREATE:
+		cPen = CreatePen(PS_SOLID, 5, RGB(255, 255, 0));
+		hpPen = CreatePen(PS_SOLID, 2, RGB(0, 0, 0));
+		ePen = CreatePen(PS_SOLID, 2, RGB(0, 0, 0));
+
+		rBrush = CreateSolidBrush(RGB(255, 0, 0));
+		gBrush = CreateSolidBrush(RGB(0, 255, 0));
+		wBrush = CreateSolidBrush(RGB(255, 255, 255));
+
 		player_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\pawn.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		player_hBitmap[1] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\bishop.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		player_hBitmap[2] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\rook.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
@@ -273,6 +345,10 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				tile_map[y][x] = ((x / 3) + (y / 3)) % 2;
 			}
 		}
+
+		std::cout << "Enter ID : ";
+		std::cin >> player.m_name;
+		std::cout << std::endl;
 
 		init_socket();
 		break;
@@ -304,6 +380,14 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			do_send(&p);
 			break;
 		}
+
+		case VK_ESCAPE: {
+			CS_LOGOUT_PACKET p;
+			p.size = sizeof(CS_LOGOUT_PACKET);
+			p.type = CS_LOGOUT;
+			do_send(&p);
+			break;
+		}
 		}
 		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
@@ -325,6 +409,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		HGDIOBJ old_hBitmap = SelectObject(mDC, hBitmap);
 
 		bg.print(mDC);
+		print_ui(mDC);
 
 		BitBlt(hDC, 0, 0, rect.right, rect.bottom, mDC, 0, 0, SRCCOPY);
 
@@ -365,6 +450,7 @@ void init_socket() {
 	CS_LOGIN_PACKET p;
 	p.size = sizeof(CS_LOGIN_PACKET);
 	p.type = CS_LOGIN;
+	strcpy(p.name, player.m_name);
 	do_send(&p);
 
 	DWORD recv_bytes;
@@ -412,6 +498,7 @@ void process_packet(char* packet) {
 		other.m_x = p->x;
 		other.m_y = p->y;
 		other.m_level = p->level;
+		strcpy(other.m_name, p->name);
 		others.emplace(other.m_id, other);
 		break;
 	}

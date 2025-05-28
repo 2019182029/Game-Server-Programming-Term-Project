@@ -15,6 +15,8 @@
 #include <unordered_set>
 #include <concurrent_unordered_map.h>
 
+#include "..\protocol.h"
+
 #pragma comment (lib, "WS2_32.LIB")
 #pragma comment (lib, "MSWSock.LIB")
 
@@ -45,7 +47,7 @@ extern std::mutex timer_lock;
 // EXP_OVER
 enum IO_TYPE { 
 	IO_ACCEPT, IO_SEND, IO_RECV, 
-	IO_PLAYER_KILLED_NPC,
+	IO_PLAYER_KILL_NPC,
 	IO_NPC_MOVE, IO_NPC_DIE, IO_NPC_RESPAWN 
 };
 
@@ -84,6 +86,7 @@ public:
 	int m_max_hp;
 	std::atomic<int> m_exp;
 	int m_level;
+	char m_name[NAME_SIZE];
 
 	std::atomic<bool> m_is_active;
 
