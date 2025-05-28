@@ -103,6 +103,7 @@ public:
 	void send_add_object(int c_id);
 	void send_move_object(int c_id);
 	void send_remove_object(int c_id);
+	void send_chat(int c_id, const char* mess);
 
 	bool earn_exp(int& exp);
 	void send_earn_exp(int exp);

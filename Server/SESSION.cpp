@@ -156,6 +156,15 @@ void SESSION::send_remove_object(int c_id) {
 	do_send(&p);
 }
 
+void SESSION::send_chat(int c_id, const char* mess) {
+	SC_CHAT_PACKET p;
+	p.size = sizeof(p);
+	p.type = SC_CHAT;
+	p.id = c_id;
+	strcpy(p.mess, mess);
+	do_send(&p);
+}
+
 bool SESSION::earn_exp(int& exp) {
 	while (true) {
 		int expected = m_exp;

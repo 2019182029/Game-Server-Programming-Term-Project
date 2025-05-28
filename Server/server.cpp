@@ -177,6 +177,9 @@ void worker() {
 					std::shared_ptr<SESSION> other = g_clients.at(cl);
 					if (nullptr == other) continue;
 
+					if (ST_INGAME != other->m_state) { continue; }
+					if (!can_see(cliend_id, other->m_id)) { continue; }
+
 					if (is_player(cl)) {
 						other->send_level_up(key);
 					}
@@ -382,6 +385,28 @@ void process_packet(int c_id, char* packet) {
 					if (is_player(other->m_id)) { other->send_add_object(c_id); }
 					else { other->wake_up(); }
 				}
+			}
+		}
+		break;
+	}
+
+	case CS_CHAT: {	
+		CS_CHAT_PACKET* p = reinterpret_cast<CS_CHAT_PACKET*>(packet);
+
+		client->m_vl.lock();
+		std::unordered_set<int> vlist = client->m_view_list;
+		client->m_vl.unlock();
+
+		for (auto& cl : vlist) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) continue;
+
+			if (ST_INGAME != other->m_state) { continue; }
+			if (other->m_id == c_id) { continue; }
+			if (!can_see(c_id, other->m_id)) { continue; }
+
+			if (is_player(cl)) {
+				other->send_chat(c_id, p->mess);
 			}
 		}
 		break;

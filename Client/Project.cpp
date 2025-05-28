@@ -170,8 +170,37 @@ public:
 PLAYER player;
 std::unordered_map<int, PLAYER> others;
 
+//////////////////////////////////////////////////
+// UI
 HPEN cPen, hpPen, ePen;
 HBRUSH rBrush, gBrush, wBrush;
+
+bool chat = false;
+std::string chat_input;
+std::vector<std::string> chat_log;
+constexpr int MAX_CHAT_LINE = 10;
+
+void draw_chat_box(HDC hDC, int x, int y, int width, int height) {
+	HDC memDC = CreateCompatibleDC(hDC);
+	HBITMAP hBitmap = CreateCompatibleBitmap(hDC, width, height);
+	HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, hBitmap);
+
+	HBRUSH hBrush = CreateSolidBrush(RGB(50, 50, 50)); 
+	RECT rc = { 0, 0, width, height };
+	FillRect(memDC, &rc, hBrush);
+	DeleteObject(hBrush);
+
+	BLENDFUNCTION blend = {};
+	blend.BlendOp = AC_SRC_OVER;
+	blend.SourceConstantAlpha = 192;
+	blend.AlphaFormat = 0;
+
+	AlphaBlend(hDC, x, y, width, height, memDC, 0, 0, width, height, blend);
+
+	SelectObject(memDC, oldBitmap);
+	DeleteObject(hBitmap);
+	DeleteDC(memDC);
+}
 
 void print_ui(HDC hDC) {
 	HDC mDC = CreateCompatibleDC(hDC);
@@ -206,6 +235,37 @@ void print_ui(HDC hDC) {
 	} else {
 		Rectangle(hDC, 110, 35,
 			110 + 250, 60);
+	}
+
+	// Chat
+	int line_height = 20;
+
+	int chat_width = 400;
+	int chat_height = 120;
+
+	int base_x = 10;
+	int base_y = rect.bottom - line_height - 10;
+
+	SetBkMode(hDC, TRANSPARENT);
+	SetBkColor(hDC, RGB(0, 0, 0));
+	SetTextColor(hDC, RGB(255, 255, 255));
+
+	if (chat) {
+		draw_chat_box(hDC, base_x, base_y + 3, chat_width, line_height);
+		RECT r = { base_x, base_y + 3, base_x + chat_width, base_y + line_height + 3 };
+		DrawTextA(hDC, chat_input.c_str(), -1, &r, DT_LEFT | DT_SINGLELINE);
+	}
+
+	if (!chat_log.empty()) {
+		int total = static_cast<int>(chat_log.size());
+		int visible = min(total, MAX_CHAT_LINE);
+
+		draw_chat_box(hDC, base_x, base_y - total * line_height, chat_width, total * line_height);
+		for (int i = 0; i < visible; ++i) {
+			int log_index = total - visible + i;
+			RECT r = { base_x, base_y - (visible - i) * line_height, base_x + chat_width, base_y - (visible - 1 - i) * line_height };
+			DrawTextA(hDC, chat_log[log_index].c_str(), -1, &r, DT_LEFT | DT_SINGLELINE);
+		}
 	}
 
 	SelectObject(hDC, oldPen);
@@ -353,41 +413,90 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		init_socket();
 		break;
 
-	case WM_KEYDOWN: 
-		switch (wParam) {
-		case VK_UP:
-		case VK_DOWN:
-		case VK_LEFT:
-		case VK_RIGHT: {
-			CS_MOVE_PACKET p;
-			p.size = sizeof(CS_MOVE_PACKET);
-			p.type = CS_MOVE;
-			switch (wParam) {
-			case VK_UP:    player.move(0, -1); p.direction = 0; break;
-			case VK_DOWN:  player.move(0, 1); p.direction = 1; break;
-			case VK_LEFT:  player.move(-1, 0); p.direction = 2; break;
-			case VK_RIGHT: player.move(1, 0); p.direction = 3; break;
+	case WM_CHAR:
+		if (chat) {
+			if ((wParam >= 32) && (wParam < 127)) {
+				if (chat_input.size() < CHAT_SIZE) {
+					chat_input.push_back((char)wParam);
+				}
 			}
-			do_send(&p);
-			break;
 		}
+		InvalidateRect(g_hWnd, NULL, FALSE);
+		break;
 
-		case VK_SPACE: {
-			CS_ATTACK_PACKET p;
-			p.size = sizeof(CS_ATTACK_PACKET);
-			p.type = CS_ATTACK;
-			player.m_is_attacking = true;
-			do_send(&p);
-			break;
-		}
+	case WM_KEYDOWN: 
+		if (chat) {
+			switch (wParam) {
+			case VK_BACK:
+				if (!chat_input.empty()) {
+					chat_input.pop_back();
+				}
+				break;
 
-		case VK_ESCAPE: {
-			CS_LOGOUT_PACKET p;
-			p.size = sizeof(CS_LOGOUT_PACKET);
-			p.type = CS_LOGOUT;
-			do_send(&p);
-			break;
-		}
+			case VK_RETURN:
+				if (!chat_input.empty()) {
+					CS_CHAT_PACKET p;
+					p.size = sizeof(CS_CHAT_PACKET);
+					p.type = CS_CHAT;
+					strcpy_s(p.mess, chat_input.c_str());
+					do_send(&p);
+
+					char buf[128];
+					sprintf_s(buf, "[%s] : %s", player.m_name, chat_input);
+					chat_log.emplace_back(buf);
+					if (chat_log.size() > MAX_CHAT_LINE) {
+						chat_log.erase(chat_log.begin());
+					}
+				}
+				chat_input.clear();
+				chat = false;
+				break;
+
+			case VK_ESCAPE:
+				chat_input.clear();
+				chat = false;
+				break;
+			}
+		} else {
+			switch (wParam) {
+			case VK_UP:
+			case VK_DOWN:
+			case VK_LEFT:
+			case VK_RIGHT: {
+				CS_MOVE_PACKET p;
+				p.size = sizeof(CS_MOVE_PACKET);
+				p.type = CS_MOVE;
+				switch (wParam) {
+				case VK_UP:    player.move(0, -1); p.direction = 0; break;
+				case VK_DOWN:  player.move(0, 1); p.direction = 1; break;
+				case VK_LEFT:  player.move(-1, 0); p.direction = 2; break;
+				case VK_RIGHT: player.move(1, 0); p.direction = 3; break;
+				}
+				do_send(&p);
+				break;
+			}
+
+			case VK_SPACE: {
+				CS_ATTACK_PACKET p;
+				p.size = sizeof(CS_ATTACK_PACKET);
+				p.type = CS_ATTACK;
+				player.m_is_attacking = true;
+				do_send(&p);
+				break;
+			}
+
+			case VK_RETURN:
+				chat = true;
+				break;
+
+			case VK_ESCAPE: {
+				CS_LOGOUT_PACKET p;
+				p.size = sizeof(CS_LOGOUT_PACKET);
+				p.type = CS_LOGOUT;
+				do_send(&p);
+				break;
+			}
+			}
 		}
 		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
@@ -510,7 +619,6 @@ void process_packet(char* packet) {
 			player.m_y = p->y;
 			break;
 		}
-		
 		if (others.count(p->id)) {
 			others.at(p->id).m_x = p->x;
 			others.at(p->id).m_y = p->y;
@@ -521,6 +629,19 @@ void process_packet(char* packet) {
 	case SC_REMOVE_OBJECT: {
 		SC_REMOVE_OBJECT_PACKET* p = reinterpret_cast<SC_REMOVE_OBJECT_PACKET*>(packet);
 		others.erase(p->id);
+		break;
+	}
+
+	case SC_CHAT: {
+		SC_CHAT_PACKET* p = reinterpret_cast<SC_CHAT_PACKET*>(packet);
+		if (others.count(p->id)) {
+			char buf[128];
+			sprintf_s(buf, "[%s] : %s", others.at(p->id).m_name, p->mess);
+			chat_log.emplace_back(buf);
+			if (chat_log.size() > MAX_CHAT_LINE) {
+				chat_log.erase(chat_log.begin());
+			}
+		}
 		break;
 	}
 
@@ -536,16 +657,12 @@ void process_packet(char* packet) {
 			player.m_level = p->level;
 			break;
 		}
-
-		std::cout << p->id << std::endl;
 		if (others.count(p->id)) {
 			others.at(p->id).m_level = p->level;
-			std::cout << p->id << " level up to " << p->level << others.at(p->id).m_level << std::endl;
 		}
 		break;
 	}
 	}
-
 	InvalidateRect(g_hWnd, NULL, FALSE);
 }
 
