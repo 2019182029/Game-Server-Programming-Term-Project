@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <tchar.h>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <unordered_map>
 
@@ -46,6 +47,8 @@ BITMAP player_bmp[6];
 short camera_x = 0;
 short camera_y = 0;
 
+std::vector<uint8_t> terrain((W_WIDTH * W_HEIGHT + 7) / 8, 0); 
+
 struct pair_hash {
 	size_t operator()(const std::pair<short, short>& p) const {
 		return std::hash<int>()((p.first << 16) ^ p.second);
@@ -55,6 +58,8 @@ struct pair_hash {
 std::unordered_map<std::pair<short, short>, std::chrono::high_resolution_clock::time_point, pair_hash> attacked_coords;
 
 void print_ui(HDC hDC);
+bool load_terrain(const std::string& filename);
+bool get_tile(int x, int y);
 
 class PLAYER {
 public:
@@ -256,6 +261,25 @@ void print_ui(HDC hDC) {
 	DeleteDC(mDC);
 }
 
+bool load_terrain(const std::string& filename) {
+	std::ifstream ifs(filename, std::ios::binary);
+
+	if (!ifs.is_open()) { return false; }
+
+	terrain.resize((2000 * 2000 + 7) / 8);
+
+	ifs.read(reinterpret_cast<char*>(terrain.data()), terrain.size());
+	ifs.close();
+
+	return true;
+}
+
+bool get_tile(int x, int y) {
+	int idx = y * W_WIDTH + x;
+
+	return (terrain[idx / 8] >> (idx % 8)) & 1;
+}
+
 //////////////////////////////////////////////////
 // Background
 char tile_map[W_WIDTH][W_HEIGHT];
@@ -297,6 +321,8 @@ public:
 				short map_y = camera_y + y;
 
 				if (map_x < 0 || map_y < 0 || map_x >= W_WIDTH || map_y >= W_HEIGHT) { continue; }
+
+				if (get_tile(map_x, map_y)) { continue; }
 
 				char tile_type = tile_map[map_y][map_x];
 				HDC tileDC = CreateCompatibleDC(hDC);
@@ -392,6 +418,12 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 
 	switch (iMessage) {
 	case WM_CREATE:
+		if (!load_terrain("../Server/terrain.bin")) {
+			std::cout << "Terrain Loading Failed" << std::endl;
+			PostQuitMessage(0);
+			return 0;
+		}
+
 		cPen = CreatePen(PS_SOLID, 5, RGB(255, 255, 0));
 		hpPen = CreatePen(PS_SOLID, 2, RGB(0, 0, 0));
 		ePen = CreatePen(PS_SOLID, 2, RGB(0, 0, 0));
