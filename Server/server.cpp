@@ -24,10 +24,24 @@ void update_sector(int c_id, short old_x, short old_y, short new_x, short new_y)
 
 //////////////////////////////////////////////////
 // NPC
+struct Node {
+	short x, y;
+	int g, h;
+	Node* parent;
+
+	int f() const { return g + h; }
+	bool operator>(const Node& other) const { return f() > other.f(); }
+};
+
 void init_npc();
 bool is_player(int c_id);
 bool is_npc(int c_id);
-void do_npc_random_move(int c_id);
+
+void do_npc_random_move(int obj_id);
+void do_npc_chase_move(int obj_id, int target_id);
+
+int heuristic(int x1, int y1, int x2, int y2);
+std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short gy);
 
 //////////////////////////////////////////////////
 // TIMER
@@ -39,6 +53,7 @@ std::vector<uint8_t> terrain((W_WIDTH* W_HEIGHT + 7) / 8, 0);
 
 bool load_terrain(const std::string& filename);
 bool get_tile(int x, int y);
+bool is_valid_move(int x, int y);
 
 //////////////////////////////////////////////////
 // MAIN
@@ -163,55 +178,28 @@ void worker() {
 			break;
 		}
 
-		case IO_PLAYER_KILL_NPC: {
-			int client_id = static_cast<int>(key);
+		case IO_NPC_MOVE: {
+			int npc_id = static_cast<int>(key);
 
-			std::shared_ptr<SESSION> client = g_clients.at(client_id);
-			if (nullptr == client) break;
+			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+			if (nullptr == npc) { break; }
 
-			int exp = 0;
-			bool level_up = client->earn_exp(exp);
-
-			// Send Earn Exp Packet to Player
-			client->send_earn_exp(exp);
-			
-			if (level_up) { 
-				// Send Level Up Packet to Player
-				client->m_vl.lock();
-				std::unordered_set<int> vlist = client->m_view_list;
-				client->m_vl.unlock();
-
-				client->send_level_up(client_id);
-
-				for (auto& cl : vlist) {
-					std::shared_ptr<SESSION> other = g_clients.at(cl);
-					if (nullptr == other) continue;
-
-					if (ST_INGAME != other->m_state) { continue; }
-					if (!can_see(client_id, other->m_id)) { continue; }
-
-					if (is_player(cl)) {
-						other->send_level_up(client_id);
-					}
-				}
+			if (npc->m_is_active) {
+				do_npc_random_move(npc_id);
 			}
 
 			delete eo;
 			break;
 		}
 
-		case IO_NPC_MOVE: {
+		case IO_NPC_CHASE: {
 			int npc_id = static_cast<int>(key);
 
 			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
-			if (nullptr == npc) break;
+			if (nullptr == npc) { break; }
 
 			if (npc->m_is_active) {
-				do_npc_random_move(npc_id);
-			
-				timer_lock.lock();
-				timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-				timer_lock.unlock();
+				do_npc_chase_move(npc_id, eo->m_target_id);
 			}
 
 			delete eo;
@@ -219,6 +207,7 @@ void worker() {
 		}
 
 		case IO_NPC_DIE: {
+			// Npc
 			int npc_id = static_cast<int>(key);
 
 			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
@@ -269,6 +258,39 @@ void worker() {
 			timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_NPC_RESPAWN });
 			timer_lock.unlock();
 
+			// Player
+			int client_id = eo->m_target_id;
+
+			std::shared_ptr<SESSION> client = g_clients.at(client_id);
+			if (nullptr == client) break;
+
+			int exp = 0;
+			bool level_up = client->earn_exp(exp);
+
+			// Send Earn Exp Packet to Player
+			client->send_earn_exp(exp);
+
+			if (level_up) {
+				// Send Level Up Packet to Player
+				client->m_vl.lock();
+				std::unordered_set<int> vlist = client->m_view_list;
+				client->m_vl.unlock();
+
+				client->send_level_up(client_id);
+
+				for (auto& cl : vlist) {
+					std::shared_ptr<SESSION> other = g_clients.at(cl);
+					if (nullptr == other) continue;
+
+					if (ST_INGAME != other->m_state) { continue; }
+					if (!can_see(client_id, other->m_id)) { continue; }
+
+					if (is_player(cl)) {
+						other->send_level_up(client_id);
+					}
+				}
+			}
+
 			delete eo;
 			break;
 		}
@@ -289,8 +311,6 @@ void worker() {
 				g_sector[sy][sx].insert(npc_id);
 			}
 
-			bool keep_alive = false;
-
 			// Search Nearby Objects by Sector
 			for (short dy = -1; dy <= 1; ++dy) {
 				for (short dx = -1; dx <= 1; ++dx) {
@@ -309,15 +329,11 @@ void worker() {
 						if (!can_see(npc_id, other->m_id)) { continue; }
 
 						if (is_player(other->m_id)) { 
-							keep_alive = true;
 							other->send_add_object(npc_id);
+							npc->try_wake_up(other->m_id);
 						}
 					}
 				}
-			}
-
-			if (keep_alive) {
-				npc->wake_up();
 			}
 
 			delete eo;
@@ -399,7 +415,7 @@ void process_packet(int c_id, char* packet) {
 
 					client->send_add_object(other->m_id);
 					if (is_player(other->m_id)) { other->send_add_object(c_id); }
-					else { other->wake_up(); }
+					else { other->try_wake_up(c_id); }
 				}
 			}
 		}
@@ -445,14 +461,14 @@ void process_packet(int c_id, char* packet) {
 		case 3: ++new_x; break;
 		}
 
-		if (true == get_tile(new_x, new_y)) { 
+		if (false == is_valid_move(new_x, new_y)) {
 			// Send Packet in order to Prevent Cheating
 			client->send_move_object(c_id);
 			break;
 		}
 
-		if ((0 <= new_x) && (new_x < W_WIDTH)) { client->m_x = new_x; }
-		if ((0 <= new_y) && (new_y < W_HEIGHT)) { client->m_y = new_y; }
+		client->m_x = new_x;
+		client->m_y = new_y;
 
 		// Update Sector
 		update_sector(c_id, old_x, old_y, new_x, new_y);
@@ -500,7 +516,7 @@ void process_packet(int c_id, char* packet) {
 					other->send_add_object(c_id);
 				}
 			} else {
-				other->wake_up();
+				other->try_wake_up(c_id);
 			}
 
 			if (!old_vlist.count(cl)) { client->send_add_object(cl); }
@@ -616,7 +632,7 @@ bool can_see(int from, int to) {
 	std::shared_ptr<SESSION> client_from = g_clients.at(from);
 	std::shared_ptr<SESSION> client_to = g_clients.at(to);
 
-	if (!client_from || !client_to) return false;
+	if ((nullptr == client_from) || (nullptr == client_to)) { return false; }
 
 	if (abs(client_from->m_x - client_to->m_x) > VIEW_RANGE) {
 		return false;
@@ -649,7 +665,7 @@ void init_npc() {
 		p->m_state = ST_INGAME;
 		p->m_x = rand() % W_WIDTH;
 		p->m_y = rand() % W_HEIGHT;
-		p->m_level = 4;
+		p->m_level = (rand() % 2) + KNIGHT;
 		snprintf(p->m_name, sizeof(p->m_name), "Npc %d", i);
 		g_clients.insert(std::make_pair(p->m_id, p));
 
@@ -672,8 +688,8 @@ bool is_npc(int c_id) {
 	return !is_player(c_id);
 }
 
-void do_npc_random_move(int c_id) {
-	std::shared_ptr<SESSION> npc = g_clients.at(c_id);
+void do_npc_random_move(int obj_id) {
+	std::shared_ptr<SESSION> npc = g_clients.at(obj_id);
 	if (nullptr == npc) return;
 
 	short old_x = npc->m_x;
@@ -681,11 +697,12 @@ void do_npc_random_move(int c_id) {
 	short new_x = old_x;
 	short new_y = old_y;
 
+	// Create Old View List by Sector
 	int sx = old_x / SECTOR_WIDTH;
 	int sy = old_y / SECTOR_HEIGHT;
 
-	// Create Old View List by Sector
 	bool keep_alive = false;
+
 	std::unordered_set<int> old_vl;
 
 	for (int dy = -1; dy <= 1; ++dy) {
@@ -723,10 +740,10 @@ void do_npc_random_move(int c_id) {
 		std::make_pair( 0,  1),  // Down
 		std::make_pair(-1,  0),  // Left
 		std::make_pair( 1,  0),  // Right
-		std::make_pair(-1, -1),   
-		std::make_pair( 1, -1),
-		std::make_pair(-1,  1),
-		std::make_pair( 1,  1)
+		std::make_pair(-1, -1),  // Up-Left
+		std::make_pair( 1, -1),  // Up-Right
+		std::make_pair(-1,  1),  // Down-Left
+		std::make_pair( 1,  1)   // Down-Right
 	};
 
 	static std::mt19937 rng(std::random_device{}()); 
@@ -737,9 +754,7 @@ void do_npc_random_move(int c_id) {
 		new_x = old_x + dx;
 		new_y = old_y + dy;
 
-		if (new_x < 0 || new_x >= W_WIDTH || new_y < 0 || new_y >= W_HEIGHT) { continue; }
-
-		if (false == get_tile(new_x, new_y)) {
+		if (true == is_valid_move(new_x, new_y)) {
 			moved = true;
 
 			npc->m_x = new_x;
@@ -754,7 +769,7 @@ void do_npc_random_move(int c_id) {
 	sx = npc->m_x / SECTOR_WIDTH;
 	sy = npc->m_y / SECTOR_HEIGHT;
 
-	update_sector(c_id, old_x, old_y, new_x, new_y);
+	update_sector(obj_id, old_x, old_y, new_x, new_y);
 
 	// Create New View List by Sector
 	std::unordered_set<int> new_vl;
@@ -784,8 +799,7 @@ void do_npc_random_move(int c_id) {
 		if (0 == old_vl.count(cl)) {
 			// 플레이어의 시야에 등장
 			other->send_add_object(npc->m_id);
-		}
-		else {
+		} else {
 			// 플레이어가 계속 보고 있음.
 			other->send_move_object(npc->m_id);
 		}
@@ -800,12 +814,217 @@ void do_npc_random_move(int c_id) {
 			if (0 != other->m_view_list.count(npc->m_id)) {
 				other->m_vl.unlock();
 				other->send_remove_object(npc->m_id);
-			}
-			else {
+			} else {
 				other->m_vl.unlock();
 			}
 		}
 	}
+
+	timer_lock.lock();
+	timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
+	timer_lock.unlock();
+}
+
+void do_npc_chase_move(int obj_id, int target_id) {
+	std::shared_ptr<SESSION> obj = g_clients.at(obj_id);
+	std::shared_ptr<SESSION> target = g_clients.at(target_id);
+
+	if (nullptr == obj) { return; }
+	if (nullptr == target) {
+		obj->sleep();
+		return;
+	}
+
+	short old_x = obj->m_x;
+	short old_y = obj->m_y;
+	short new_x = old_x;
+	short new_y = old_y;
+	short target_x = target->m_x;
+	short target_y = target->m_y;
+
+	if ((abs(old_x - target_x) > CHASE_RANGE) ||
+		(abs(old_y - target_y) > CHASE_RANGE)) {
+		obj->sleep();
+		return;
+	}
+
+	// Create Old View List by Sector
+	int sx = old_x / SECTOR_WIDTH;
+	int sy = old_y / SECTOR_HEIGHT;
+
+	std::unordered_set<int> old_vl;
+
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			short nx = sx + dx;
+			short ny = sy + dy;
+
+			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+			for (auto cl : g_sector[ny][nx]) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) { continue; }
+
+				if (ST_INGAME != other->m_state) { continue; }
+				if (is_npc(other->m_id)) { continue; }
+				if (can_see(obj->m_id, other->m_id)) {
+					old_vl.insert(other->m_id);
+				}
+			}
+		}
+	}
+
+	// Move
+	auto path = a_star(old_x, old_y, target_x, target_y);
+
+	if (path.size() < 2) { 
+		obj->sleep();
+		return;
+	}
+
+	auto [nx, ny] = path[1];
+
+	obj->m_x = new_x = nx;
+	obj->m_y = new_y = ny;
+
+	// Update Sector
+	sx = new_x / SECTOR_WIDTH;
+	sy = new_y / SECTOR_HEIGHT;
+
+	update_sector(obj_id, old_x, old_y, new_x, new_y);
+
+	// Create New View List by Sector
+	std::unordered_set<int> new_vl;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			short nx = sx + dx;
+			short ny = sy + dy;
+
+			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+			for (auto cl : g_sector[ny][nx]) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) continue;
+
+				if (ST_INGAME != other->m_state) continue;
+				if (is_npc(other->m_id)) continue;
+				if (can_see(obj->m_id, other->m_id)) { new_vl.insert(other->m_id); }
+			}
+		}
+	}
+
+	for (auto cl : new_vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) {
+			obj->sleep();
+			return;
+		}
+
+		if (0 == old_vl.count(cl)) {
+			// 플레이어의 시야에 등장
+			other->send_add_object(obj->m_id);
+		} else {
+			// 플레이어가 계속 보고 있음.
+			other->send_move_object(obj->m_id);
+		}
+	}
+
+	for (auto cl : old_vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) {
+			obj->sleep();
+			return;
+		}
+
+		if (0 == new_vl.count(cl)) {
+			other->m_vl.lock();
+			if (0 != other->m_view_list.count(obj->m_id)) {
+				other->m_vl.unlock();
+				other->send_remove_object(obj->m_id);
+			} else {
+				other->m_vl.unlock();
+			}
+		}
+	}
+
+	timer_lock.lock();
+	timer_queue.emplace(event{ obj->m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_CHASE });
+	timer_lock.unlock();
+}
+
+int heuristic(int x1, int y1, int x2, int y2) {
+	return abs(x1 - x2) + abs(y1 - y2);  // Manhattan Diatance
+}
+
+std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short gy) {
+	using p = std::pair<short, short>;
+
+	std::priority_queue <Node*, std::vector<Node*>, decltype([](Node* a, Node* b) { return *a > *b; })> open;
+	std::unordered_map<int, Node*> visited;
+
+	auto hash = [](int x, int y) { return y * W_WIDTH + x; };
+
+	Node* start = new Node{ sx, sy, 0, heuristic(sx, sy, gx, gy), nullptr };
+	open.push(start);
+	visited[hash(sx, sy)] = start;
+
+	constexpr std::array<std::pair<short, short>, 8> directions = {
+		std::make_pair( 0, -1),  // Up
+		std::make_pair( 0,  1),  // Down
+		std::make_pair(-1,  0),  // Left
+		std::make_pair( 1,  0),  // Right
+		std::make_pair(-1, -1),  // Up-Left
+		std::make_pair( 1, -1),  // Up-Right
+		std::make_pair(-1,  1),  // Down-Left
+		std::make_pair( 1,  1)   // Down-Right
+	};
+
+	while (!open.empty()) {
+		Node* curr = open.top(); open.pop();
+
+		if ((curr->x == gx) && (curr->y == gy)) {
+			std::vector<std::pair<short, short>> path;
+
+			while (curr) {
+				path.emplace_back(curr->x, curr->y);
+				curr = curr->parent;
+			}
+
+			std::reverse(path.begin(), path.end());
+
+			for (auto& [_, node] : visited) {
+				delete node;
+			}
+
+			return path;
+		}
+
+		for (auto [dx, dy] : directions) {
+			short nx = curr->x + dx;
+			short ny = curr->y + dy;
+
+			if (true == is_valid_move(nx, ny)) {
+				int h = heuristic(nx, ny, gx, gy);
+				int g = curr->g + 1;
+
+				int key = hash(nx, ny);
+
+				if ((visited.contains(key)) && (visited[key]->g <= g)) { continue; }
+
+				Node* next = new Node{ nx, ny, g, h, curr };
+				visited[key] = next;
+				open.push(next);
+			}
+		}
+	}
+
+	for (auto& [_, node] : visited) {
+		delete node;
+	}
+
+	return {};
 }
 
 void do_timer() {
@@ -835,14 +1054,19 @@ void do_timer() {
 				break;
 			}
 
+			case EV_NPC_CHASE: {
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_NPC_CHASE;
+				o->m_target_id = k.target_id;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+				break;
+			}
+
 			case EV_NPC_DIE: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_NPC_DIE;
+				o->m_target_id = k.target_id;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
-
-				o = new EXP_OVER;
-				o->m_io_type = IO_PLAYER_KILL_NPC;
-				PostQueuedCompletionStatus(g_hIOCP, 0, k.target_id, &o->m_over);
 				break;
 			}
 
@@ -878,4 +1102,8 @@ bool get_tile(int x, int y) {
 	int idx = y * W_WIDTH + x;
 
 	return (terrain[idx / 8] >> (idx % 8)) & 1;
+}
+
+bool is_valid_move(int x, int y) {
+	return x >= 0 && x < W_WIDTH && y >= 0 && y < W_HEIGHT && false == get_tile(x, y);
 }

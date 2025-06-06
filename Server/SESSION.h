@@ -15,6 +15,7 @@
 #include <random>
 #include <fstream>
 #include <unordered_set>
+#include <unordered_map>
 #include <concurrent_unordered_map.h>
 
 #include "protocol.h"
@@ -28,7 +29,7 @@ class SESSION;
 extern concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
 enum EVENT_TYPE { 
-	EV_NPC_MOVE, EV_NPC_DIE, EV_NPC_RESPAWN 
+	EV_NPC_MOVE, EV_NPC_CHASE, EV_NPC_DIE, EV_NPC_RESPAWN 
 };
 
 struct event {
@@ -49,8 +50,7 @@ extern std::mutex timer_lock;
 // EXP_OVER
 enum IO_TYPE { 
 	IO_ACCEPT, IO_SEND, IO_RECV, 
-	IO_PLAYER_KILL_NPC,
-	IO_NPC_MOVE, IO_NPC_DIE, IO_NPC_RESPAWN 
+	IO_NPC_MOVE, IO_NPC_CHASE, IO_NPC_DIE, IO_NPC_RESPAWN 
 };
 
 class EXP_OVER {
@@ -61,6 +61,8 @@ public:
 
 	SOCKET m_accept_socket;
 	IO_TYPE m_io_type;
+
+	int m_target_id;
 
 public:
 	EXP_OVER();
@@ -114,7 +116,8 @@ public:
 	void send_earn_exp(int exp);
 	void send_level_up(int c_id);
 
-	void wake_up();
+	void try_wake_up(int target_id);
+	void wake_up(int target_id);
 	void sleep();
 	void receive_damage(int damage, int target_id);
 	void respawn();

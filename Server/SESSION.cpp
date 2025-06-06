@@ -33,8 +33,8 @@ SESSION::SESSION() {
 }
 
 SESSION::SESSION(int id) : m_id(id) {
-	m_x = rand() % S_WIDTH;
-	m_y = rand() % S_HEIGHT;
+	m_x = 0;
+	m_y = 0;
 	m_hp = 10;
 	m_max_hp = 10;
 	m_exp = 0;
@@ -47,11 +47,8 @@ SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
 
-	//m_x = rand() % S_WIDTH; 
-	//m_y = rand() % S_HEIGHT;
-
-	m_x = 0;
-	m_y = 0;
+	m_x = rand() % W_WIDTH;
+	m_y = rand() % W_HEIGHT;
 	m_hp = 10;
 	m_max_hp = 10;
 	m_exp = 0;
@@ -196,14 +193,42 @@ void SESSION::send_level_up(int c_id) {
 	do_send(&p);
 }
 
-void SESSION::wake_up() {
+void SESSION::try_wake_up(int target_id) {
+	switch (m_level) {
+	case KNIGHT: {
+		wake_up(INVALID_ID);
+		break;
+	}
+
+	case QUEEN: {
+		std::shared_ptr<SESSION> client = g_clients.at(target_id);
+		if (nullptr == client) return;
+
+		if ((abs(client->m_x - m_x) < AGGRO_RANGE) &&
+			(abs(client->m_y - m_y) < AGGRO_RANGE)) { wake_up(target_id); }
+		break;
+	}
+	}
+}
+
+void SESSION::wake_up(int target_id) {
 	if (!m_is_active) {
 		bool expected = false;
 
 		if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
-			timer_lock.lock();
-			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-			timer_lock.unlock();
+			switch (m_level) {
+			case KNIGHT:
+				timer_lock.lock();
+				timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
+				timer_lock.unlock();
+				break;
+
+			case QUEEN:
+				timer_lock.lock();
+				timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_CHASE });
+				timer_lock.unlock();
+				break;
+			}
 		}
 	}
 }

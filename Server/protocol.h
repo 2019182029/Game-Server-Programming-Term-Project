@@ -19,6 +19,9 @@ constexpr int KING = 3;
 constexpr int KNIGHT = 4;
 constexpr int QUEEN = 5;
 
+constexpr int AGGRO_RANGE = 5;
+constexpr int CHASE_RANGE = 9;
+
 // Screen
 constexpr int S_WIDTH = 1000;
 constexpr int S_HEIGHT = 1000;

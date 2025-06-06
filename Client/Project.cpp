@@ -437,18 +437,23 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		player_hBitmap[2] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\rook.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		player_hBitmap[3] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\king.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		player_hBitmap[4] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\knight.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		player_hBitmap[5] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\queen.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+
 		GetObject(player_hBitmap[0], sizeof(BITMAP), &player_bmp[0]);
 		GetObject(player_hBitmap[1], sizeof(BITMAP), &player_bmp[1]);
 		GetObject(player_hBitmap[2], sizeof(BITMAP), &player_bmp[2]);
 		GetObject(player_hBitmap[3], sizeof(BITMAP), &player_bmp[3]);
 		GetObject(player_hBitmap[4], sizeof(BITMAP), &player_bmp[4]);
+		GetObject(player_hBitmap[5], sizeof(BITMAP), &player_bmp[5]);
 
 		bg.m_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\white.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		bg.m_hBitmap[1] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\black.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		bg.m_hBitmap[2] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\terrain.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+
 		GetObject(bg.m_hBitmap[0], sizeof(BITMAP), &bg.m_bmp[0]);
 		GetObject(bg.m_hBitmap[1], sizeof(BITMAP), &bg.m_bmp[1]);
 		GetObject(bg.m_hBitmap[2], sizeof(BITMAP), &bg.m_bmp[2]);
+
 		GetClientRect(hWnd, &rect);
 
 		for (int y = 0; y < W_HEIGHT; ++y) {
