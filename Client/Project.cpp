@@ -288,8 +288,8 @@ char tile_map[W_WIDTH][W_HEIGHT];
 
 class BACKGROUND {
 public:
-	HBITMAP m_hBitmap[2];
-	BITMAP m_bmp[2];
+	HBITMAP m_hBitmap[3];
+	BITMAP m_bmp[3];
 
 public:
 	void visualize_attack(HDC hDC, short x, short y) const {
@@ -323,8 +323,6 @@ public:
 				short map_y = camera_y + y;
 
 				if (map_x < 0 || map_y < 0 || map_x >= W_WIDTH || map_y >= W_HEIGHT) { continue; }
-
-				if (get_tile(map_x, map_y)) { continue; }
 
 				char tile_type = tile_map[map_y][map_x];
 				HDC tileDC = CreateCompatibleDC(hDC);
@@ -447,12 +445,19 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 
 		bg.m_hBitmap[0] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\white.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		bg.m_hBitmap[1] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\black.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		bg.m_hBitmap[2] = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\terrain.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 		GetObject(bg.m_hBitmap[0], sizeof(BITMAP), &bg.m_bmp[0]);
 		GetObject(bg.m_hBitmap[1], sizeof(BITMAP), &bg.m_bmp[1]);
+		GetObject(bg.m_hBitmap[2], sizeof(BITMAP), &bg.m_bmp[2]);
 		GetClientRect(hWnd, &rect);
 
 		for (int y = 0; y < W_HEIGHT; ++y) {
 			for (int x = 0; x < W_WIDTH; ++x) {
+				if (true == get_tile(x, y)) {
+					tile_map[y][x] = 2;
+					continue;
+				}
+
 				tile_map[y][x] = ((x / 3) + (y / 3)) % 2;
 			}
 		}

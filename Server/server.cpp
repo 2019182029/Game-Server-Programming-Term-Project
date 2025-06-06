@@ -718,11 +718,15 @@ void do_npc_random_move(int c_id) {
 	// Move
 	bool moved = false;
 
-	std::array<std::pair<short, short>, 4> directions = {
+	std::array<std::pair<short, short>, 8> directions = {
 		std::make_pair( 0, -1),  // Up
 		std::make_pair( 0,  1),  // Down
 		std::make_pair(-1,  0),  // Left
-		std::make_pair( 1,  0)   // Right
+		std::make_pair( 1,  0),  // Right
+		std::make_pair(-1, -1),   
+		std::make_pair( 1, -1),
+		std::make_pair(-1,  1),
+		std::make_pair( 1,  1)
 	};
 
 	static std::mt19937 rng(std::random_device{}()); 
