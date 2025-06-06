@@ -47,7 +47,7 @@ BITMAP player_bmp[6];
 short camera_x = 0;
 short camera_y = 0;
 
-std::vector<uint8_t> terrain((W_WIDTH * W_HEIGHT + 7) / 8, 0); 
+std::vector<uint8_t> terrain((W_WIDTH* W_HEIGHT + 7) / 8, 0);
 
 struct pair_hash {
 	size_t operator()(const std::pair<short, short>& p) const {
@@ -85,6 +85,8 @@ public:
 	void move(short dx, short dy) {
 		short new_x = m_x + dx;
 		short new_y = m_y + dy;
+
+		if (true == get_tile(new_x, new_y)) { return; }
 
 		if ((0 <= new_x) && (new_x < W_WIDTH)) { m_x = new_x; }
 		if ((0 <= new_y) && (new_y < W_HEIGHT)) { m_y = new_y; }
@@ -418,7 +420,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 
 	switch (iMessage) {
 	case WM_CREATE:
-		if (!load_terrain("../Server/terrain.bin")) {
+		if (false == load_terrain("../Server/terrain.bin")) {
 			std::cout << "Terrain Loading Failed" << std::endl;
 			PostQuitMessage(0);
 			return 0;
@@ -522,10 +524,10 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				p.size = sizeof(CS_MOVE_PACKET);
 				p.type = CS_MOVE;
 				switch (wParam) {
-				case VK_UP:    player.move(0, -1); p.direction = 0; break;
-				case VK_DOWN:  player.move(0, 1); p.direction = 1; break;
-				case VK_LEFT:  player.move(-1, 0); p.direction = 2; break;
-				case VK_RIGHT: player.move(1, 0); p.direction = 3; break;
+				case VK_UP:    player.move( 0, -1);	p.direction = 0; break;
+				case VK_DOWN:  player.move( 0,  1);	p.direction = 1; break;
+				case VK_LEFT:  player.move(-1,  0);	p.direction = 2; break;
+				case VK_RIGHT: player.move( 1,  0);	p.direction = 3; break;
 				}
 				do_send(&p);
 				break;

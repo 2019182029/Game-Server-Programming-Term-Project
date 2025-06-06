@@ -34,8 +34,20 @@ void do_npc_random_move(int c_id);
 void do_timer();
 
 //////////////////////////////////////////////////
+// TERRAIN
+std::vector<uint8_t> terrain((W_WIDTH* W_HEIGHT + 7) / 8, 0);
+
+bool load_terrain(const std::string& filename);
+bool get_tile(int x, int y);
+
+//////////////////////////////////////////////////
 // MAIN
 int main() {
+	if (false == load_terrain("terrain.bin")) {
+		std::cout << "Terrain Loading Failed" << std::endl;
+		return 0;
+	}
+
 	WSADATA WSAData;
 	auto ret = WSAStartup(MAKEWORD(2, 0), &WSAData);
 	if (0 != ret) { std::cout << "WSAStartup Failed : " << WSAGetLastError() << std::endl; }
@@ -433,6 +445,12 @@ void process_packet(int c_id, char* packet) {
 		case 3: ++new_x; break;
 		}
 
+		if (true == get_tile(new_x, new_y)) { 
+			// Send Packet in order to Prevent Cheating
+			client->send_move_object(c_id);
+			break;
+		}
+
 		if ((0 <= new_x) && (new_x < W_WIDTH)) { client->m_x = new_x; }
 		if ((0 <= new_y) && (new_y < W_HEIGHT)) { client->m_y = new_y; }
 
@@ -663,15 +681,8 @@ void do_npc_random_move(int c_id) {
 	short new_x = old_x;
 	short new_y = old_y;
 
-	switch (rand() % 4) {
-	case 0: if (old_y > 0) --new_y; break;
-	case 1: if (old_y < W_HEIGHT - 1) ++new_y; break;
-	case 2: if (old_x > 0) --new_x; break;
-	case 3: if (old_x < W_WIDTH - 1) ++new_x; break;
-	}
-
-	int sx = npc->m_x / SECTOR_WIDTH;
-	int sy = npc->m_y / SECTOR_HEIGHT;
+	int sx = old_x / SECTOR_WIDTH;
+	int sy = old_y / SECTOR_HEIGHT;
 
 	// Create Old View List by Sector
 	bool keep_alive = false;
@@ -704,13 +715,41 @@ void do_npc_random_move(int c_id) {
 		return;
 	}
 
-	npc->m_x = new_x;
-	npc->m_y = new_y;
+	// Move
+	bool moved = false;
 
+	std::array<std::pair<short, short>, 4> directions = {
+		std::make_pair( 0, -1),  // Up
+		std::make_pair( 0,  1),  // Down
+		std::make_pair(-1,  0),  // Left
+		std::make_pair( 1,  0)   // Right
+	};
+
+	static std::mt19937 rng(std::random_device{}()); 
+	
+	std::shuffle(directions.begin(), directions.end(), rng);
+
+	for (auto [dx, dy] : directions) {
+		new_x = old_x + dx;
+		new_y = old_y + dy;
+
+		if (new_x < 0 || new_x >= W_WIDTH || new_y < 0 || new_y >= W_HEIGHT) { continue; }
+
+		if (false == get_tile(new_x, new_y)) {
+			moved = true;
+
+			npc->m_x = new_x;
+			npc->m_y = new_y;
+			break;
+		}
+	}
+
+	if (false == moved) { return; }
+
+	// Update Sector
 	sx = npc->m_x / SECTOR_WIDTH;
 	sy = npc->m_y / SECTOR_HEIGHT;
 
-	// Update Sector
 	update_sector(c_id, old_x, old_y, new_x, new_y);
 
 	// Create New View List by Sector
@@ -816,4 +855,23 @@ void do_timer() {
 			timer_lock.unlock();
 		}
 	}
+}
+
+bool load_terrain(const std::string& filename) {
+	std::ifstream ifs(filename, std::ios::binary);
+
+	if (!ifs.is_open()) { return false; }
+
+	terrain.resize((2000 * 2000 + 7) / 8);
+
+	ifs.read(reinterpret_cast<char*>(terrain.data()), terrain.size());
+	ifs.close();
+
+	return true;
+}
+
+bool get_tile(int x, int y) {
+	int idx = y * W_WIDTH + x;
+
+	return (terrain[idx / 8] >> (idx % 8)) & 1;
 }
