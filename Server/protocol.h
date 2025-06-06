@@ -1,13 +1,23 @@
 #pragma once
 
+// Server
 constexpr int PORT_NUM = 4000;
 constexpr int BUF_SIZE = 200;
 constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 100;
 
 // Character
-constexpr int MAX_USER = 50000;
+constexpr int MAX_USER = 10000;
 constexpr int MAX_NPC = 200000;
+constexpr int INVALID_ID = -1;
+
+constexpr int PAWN = 0;
+constexpr int BISHOP = 1;
+constexpr int ROOK = 2;
+constexpr int KING = 3;
+
+constexpr int KNIGHT = 4;
+constexpr int QUEEN = 5;
 
 // Screen
 constexpr int S_WIDTH = 1000;
@@ -47,8 +57,9 @@ constexpr char SC_CHAT = 6;
 constexpr char SC_LOGIN_OK = 7;
 constexpr char SC_LOGIN_FAIL = 8;
 constexpr char SC_STAT_CHANGE = 9;
-constexpr char SC_EARN_EXP = 10;
-constexpr char SC_LEVEL_UP = 11;
+constexpr char SC_ATTACK = 10;
+constexpr char SC_EARN_EXP = 11;
+constexpr char SC_LEVEL_UP = 12;
 
 #pragma pack (push, 1)
 
@@ -62,7 +73,7 @@ struct CS_MOVE_PACKET {
 	unsigned char size;
 	char	type;
 	char	direction;  // 0 : UP, 1 : DOWN, 2 : LEFT, 3 : RIGHT
-	unsigned	move_time;
+	unsigned int move_time;
 };
 
 struct CS_CHAT_PACKET {
@@ -144,6 +155,12 @@ struct SC_STAT_CHANGE_PACKET {
 	int		max_hp;
 	int		exp;
 	int		level;
+};
+
+struct SC_ATTACK_PACKET {
+	unsigned char size;
+	char	type;
+	int		id;
 };
 
 struct SC_EARN_EXP_PACKET {

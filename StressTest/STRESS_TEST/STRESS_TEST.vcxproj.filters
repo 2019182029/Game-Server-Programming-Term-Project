@@ -15,18 +15,18 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="server.cpp">
+    <ClCompile Include="DrawModule.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
-    <ClCompile Include="SESSION.cpp">
+    <ClCompile Include="NetworkModule.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="SESSION.h">
+    <ClInclude Include="NetworkModule.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="protocol.h">
+    <ClInclude Include="..\..\Server\protocol.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
   </ItemGroup>

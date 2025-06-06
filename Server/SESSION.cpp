@@ -3,7 +3,6 @@
 #include <iostream>
 
 #include "SESSION.h"
-#include "..\protocol.h"
 
 concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
@@ -34,7 +33,8 @@ SESSION::SESSION() {
 }
 
 SESSION::SESSION(int id) : m_id(id) {
-	m_x = 0; m_y = 0;
+	m_x = rand() % S_WIDTH;
+	m_y = rand() % S_HEIGHT;
 	m_hp = 10;
 	m_max_hp = 10;
 	m_exp = 0;
@@ -47,7 +47,11 @@ SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
 
-	m_x = 0; m_y = 0;
+	//m_x = rand() % S_WIDTH; 
+	//m_y = rand() % S_HEIGHT;
+
+	m_x = 0;
+	m_y = 0;
 	m_hp = 10;
 	m_max_hp = 10;
 	m_exp = 0;
@@ -66,13 +70,6 @@ void SESSION::do_recv() {
 
 	DWORD recv_flag = 0;
 	auto ret = WSARecv(m_c_socket, m_recv_over.m_wsabuf, 1, NULL, &recv_flag, reinterpret_cast<WSAOVERLAPPED*>(&m_recv_over), NULL);
-
-	if (ret == SOCKET_ERROR) {
-		DWORD err = WSAGetLastError();
-		if (err != WSA_IO_PENDING) {
-			std::cout << "WSARecv failed : " << err << std::endl;
-		}
-	}
 }
 
 void SESSION::do_send(void* buff) {
@@ -83,14 +80,6 @@ void SESSION::do_send(void* buff) {
 
 	DWORD send_bytes;
 	auto ret = WSASend(m_c_socket, o->m_wsabuf, 1, &send_bytes, 0, &(o->m_over), NULL);
-
-	if (ret == SOCKET_ERROR) {
-		DWORD err = WSAGetLastError();
-		if (err != WSA_IO_PENDING) {
-			std::cout << "WSASend failed : " << err << std::endl;
-			delete o;
-		}
-	}
 }
 
 void SESSION::send_login_info() {
@@ -136,6 +125,7 @@ void SESSION::send_move_object(int c_id) {
 	p.type = SC_MOVE_OBJECT;
 	p.x = client->m_x;
 	p.y = client->m_y;
+	p.move_time = client->m_last_move_time;
 	do_send(&p);
 }
 
@@ -158,29 +148,32 @@ void SESSION::send_remove_object(int c_id) {
 
 void SESSION::send_chat(int c_id, const char* mess) {
 	SC_CHAT_PACKET p;
-	p.size = sizeof(p);
+	p.size = static_cast<unsigned char>(sizeof(p));
 	p.type = SC_CHAT;
 	p.id = c_id;
 	strcpy(p.mess, mess);
 	do_send(&p);
 }
 
+void SESSION::send_attack(int c_id) {
+	SC_ATTACK_PACKET p;
+	p.size = sizeof(SC_ATTACK_PACKET);
+	p.type = SC_ATTACK;
+	p.id = c_id;
+	do_send(&p);
+}
+
 bool SESSION::earn_exp(int& exp) {
-	while (true) {
-		int expected = m_exp;
+	int prev_exp = m_exp.fetch_add(50);
+	exp = prev_exp + 50;
 
-		if (std::atomic_compare_exchange_strong(&m_exp, &expected, expected + 50)) {
-			exp = expected + 50;
-
-			if (0 == (exp % 100)) {
-				if (m_level < 3) {
-					++m_level;
-					return true;
-				}
-			}
-			return false;
+	if (0 == (exp % 100)) {
+		if (m_level < KING) {
+			++m_level;
+			return true;
 		}
 	}
+	return false;
 }
 
 void SESSION::send_earn_exp(int exp) {
@@ -209,7 +202,7 @@ void SESSION::wake_up() {
 
 		if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
 			timer_lock.lock();
-			timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE, -1 });
+			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
 			timer_lock.unlock();
 		}
 	}
@@ -219,31 +212,26 @@ void SESSION::sleep() {
 	m_is_active = false;
 }
 
-void SESSION::receive_damage(int damage, int attacker_id) {
-	while (true) {
-		int hp = m_hp;
+void SESSION::receive_damage(int damage, int target_id) {
+	int prev_hp = m_hp.fetch_sub(damage);
+	int curr_hp = prev_hp - damage;
 
-		if (0 >= hp) { break; }
+	if ((0 <  prev_hp) &&
+		(0 >= curr_hp)) {
+		m_state = ST_DIE;
 
-		if (std::atomic_compare_exchange_strong(&m_hp, &hp, hp - damage)) {
-			if (0 >= (hp - damage)) {
-				m_state = ST_DIE;
+		sleep();
 
-				sleep();
-
-				timer_lock.lock();
-				timer_queue.emplace(event{ m_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE, attacker_id });
-				timer_lock.unlock();
-			}
-			break;
-		}
+		timer_lock.lock();
+		timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE });
+		timer_lock.unlock();
 	}
 }
 
 void SESSION::respawn() {
 	m_state = ST_INGAME;
 
-	m_x = 0;
-	m_y = 0;
+	m_x = rand() % S_WIDTH;
+	m_y = rand() % S_HEIGHT;
 	m_hp = m_max_hp;
 }

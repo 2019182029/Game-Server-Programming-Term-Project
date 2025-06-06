@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <concurrent_unordered_map.h>
 
-#include "..\protocol.h"
+#include "protocol.h"
 
 #pragma comment (lib, "WS2_32.LIB")
 #pragma comment (lib, "MSWSock.LIB")
@@ -31,9 +31,9 @@ enum EVENT_TYPE {
 
 struct event {
 	int obj_id;
+	int target_id;
 	std::chrono::high_resolution_clock::time_point wakeup_time;
 	EVENT_TYPE event_id;
-	int other_id;
 
 	constexpr bool operator < (const event& _Left) const {
 		return (wakeup_time > _Left.wakeup_time);
@@ -89,6 +89,7 @@ public:
 	char m_name[NAME_SIZE];
 
 	std::atomic<bool> m_is_active;
+	unsigned int m_last_move_time;
 
 public:
 	SESSION();
@@ -105,12 +106,14 @@ public:
 	void send_remove_object(int c_id);
 	void send_chat(int c_id, const char* mess);
 
+	void send_attack(int c_id);
+
 	bool earn_exp(int& exp);
 	void send_earn_exp(int exp);
 	void send_level_up(int c_id);
 
 	void wake_up();
 	void sleep();
-	void receive_damage(int damage, int attacker_id);
+	void receive_damage(int damage, int target_id);
 	void respawn();
 };

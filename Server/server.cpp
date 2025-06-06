@@ -4,8 +4,6 @@
 
 //////////////////////////////////////////////////
 // IOCP
-constexpr short SERVER_PORT = 3000;
-
 HANDLE g_hIOCP;
 SOCKET g_s_socket, g_c_socket;
 EXP_OVER g_accept_over{ IO_ACCEPT };
@@ -49,7 +47,7 @@ int main() {
 
 	SOCKADDR_IN addr;
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(SERVER_PORT);
+	addr.sin_port = htons(PORT_NUM);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	ret = bind(g_s_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(SOCKADDR_IN));
@@ -128,9 +126,9 @@ void worker() {
 		}
 
 		case IO_RECV: {
-			int cliend_id = static_cast<int>(key);
+			int client_id = static_cast<int>(key);
 
-			std::shared_ptr<SESSION> client = g_clients.at(cliend_id);
+			std::shared_ptr<SESSION> client = g_clients.at(client_id);
 			if (nullptr == client) break;
 
 			int remain_data = io_size + client->m_remained;
@@ -138,7 +136,7 @@ void worker() {
 			while (remain_data > 0) {
 				int packet_size = p[0];
 				if (packet_size <= remain_data) {
-					process_packet(cliend_id, p);
+					process_packet(client_id, p);
 					p = p + packet_size;
 					remain_data = remain_data - packet_size;
 				}
@@ -154,9 +152,9 @@ void worker() {
 		}
 
 		case IO_PLAYER_KILL_NPC: {
-			int cliend_id = static_cast<int>(key);
+			int client_id = static_cast<int>(key);
 
-			std::shared_ptr<SESSION> client = g_clients.at(cliend_id);
+			std::shared_ptr<SESSION> client = g_clients.at(client_id);
 			if (nullptr == client) break;
 
 			int exp = 0;
@@ -166,22 +164,22 @@ void worker() {
 			client->send_earn_exp(exp);
 			
 			if (level_up) { 
-				// Create View List by Sector
+				// Send Level Up Packet to Player
 				client->m_vl.lock();
 				std::unordered_set<int> vlist = client->m_view_list;
 				client->m_vl.unlock();
 
-				client->send_level_up(key); 
+				client->send_level_up(client_id);
 
 				for (auto& cl : vlist) {
 					std::shared_ptr<SESSION> other = g_clients.at(cl);
 					if (nullptr == other) continue;
 
 					if (ST_INGAME != other->m_state) { continue; }
-					if (!can_see(cliend_id, other->m_id)) { continue; }
+					if (!can_see(client_id, other->m_id)) { continue; }
 
 					if (is_player(cl)) {
-						other->send_level_up(key);
+						other->send_level_up(client_id);
 					}
 				}
 			}
@@ -200,7 +198,7 @@ void worker() {
 				do_npc_random_move(npc_id);
 			
 				timer_lock.lock();
-				timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE, -1 });
+				timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
 				timer_lock.unlock();
 			}
 
@@ -256,7 +254,7 @@ void worker() {
 			}
 
 			timer_lock.lock();
-			timer_queue.emplace(event{ npc->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_NPC_RESPAWN, -1 });
+			timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_NPC_RESPAWN });
 			timer_lock.unlock();
 
 			delete eo;
@@ -279,6 +277,8 @@ void worker() {
 				g_sector[sy][sx].insert(npc_id);
 			}
 
+			bool keep_alive = false;
+
 			// Search Nearby Objects by Sector
 			for (short dy = -1; dy <= 1; ++dy) {
 				for (short dx = -1; dx <= 1; ++dx) {
@@ -297,11 +297,15 @@ void worker() {
 						if (!can_see(npc_id, other->m_id)) { continue; }
 
 						if (is_player(other->m_id)) { 
+							keep_alive = true;
 							other->send_add_object(npc_id);
-							npc->wake_up();
 						}
 					}
 				}
+			}
+
+			if (keep_alive) {
+				npc->wake_up();
 			}
 
 			delete eo;
@@ -415,6 +419,8 @@ void process_packet(int c_id, char* packet) {
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
 
+		client->m_last_move_time = p->move_time;
+
 		short old_x = client->m_x;
 		short old_y = client->m_y;
 		short new_x = old_x;
@@ -501,27 +507,28 @@ void process_packet(int c_id, char* packet) {
 
 		// Get Attacked Coords
 		std::vector<std::pair<short, short>> attacked_coords;
+
 		switch (level) {
-		case 0: 
+		case PAWN: 
 			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x - 1, y - 1);
 			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y - 1);
 			break;
 
-		case 1:
+		case BISHOP:
 			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x - 1, y - 1);
 			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y - 1);
 			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y + 1 && y + 1 < W_HEIGHT) attacked_coords.emplace_back(x - 1, y + 1);
 			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y + 1 && y + 1 < W_HEIGHT) attacked_coords.emplace_back(x + 1, y + 1);
 			break;
 
-		case 2:
+		case ROOK:
 			if (0 <= x && x < W_WIDTH && 0 <= y - 1 && y - 1 < W_HEIGHT) attacked_coords.emplace_back(x, y - 1);
 			if (0 <= x && x < W_WIDTH && 0 <= y + 1 && y + 1 < W_HEIGHT) attacked_coords.emplace_back(x, y + 1);
 			if (0 <= x - 1 && x - 1 < W_WIDTH && 0 <= y && y < W_HEIGHT) attacked_coords.emplace_back(x - 1, y);
 			if (0 <= x + 1 && x + 1 < W_WIDTH && 0 <= y && y < W_HEIGHT) attacked_coords.emplace_back(x + 1, y);
 			break;
 
-		case 3:
+		case KING:
 			for (int dy = -1; dy <= 1; ++dy) {
 				for (int dx = -1; dx <= 1; ++dx) {
 					if (dx == 0 && dy == 0) { continue; }
@@ -566,6 +573,23 @@ void process_packet(int c_id, char* packet) {
 				}
 			}
 		}
+
+		// Send Attack Packet to Player
+		client->m_vl.lock();
+		std::unordered_set<int> vlist = client->m_view_list;
+		client->m_vl.unlock();
+
+		for (auto& cl : vlist) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) continue;
+
+			if (ST_INGAME != other->m_state) { continue; }
+			if (!can_see(c_id, other->m_id)) { continue; }
+
+			if (is_player(cl)) {
+				other->send_attack(c_id);
+			}
+		}
 		break;
 	}
 }
@@ -573,6 +597,7 @@ void process_packet(int c_id, char* packet) {
 bool can_see(int from, int to) {
 	std::shared_ptr<SESSION> client_from = g_clients.at(from);
 	std::shared_ptr<SESSION> client_to = g_clients.at(to);
+
 	if (!client_from || !client_to) return false;
 
 	if (abs(client_from->m_x - client_to->m_x) > VIEW_RANGE) {
@@ -651,6 +676,7 @@ void do_npc_random_move(int c_id) {
 	// Create Old View List by Sector
 	bool keep_alive = false;
 	std::unordered_set<int> old_vl;
+
 	for (int dy = -1; dy <= 1; ++dy) {
 		for (int dx = -1; dx <= 1; ++dx) {
 			short nx = sx + dx;
@@ -773,7 +799,7 @@ void do_timer() {
 
 				o = new EXP_OVER;
 				o->m_io_type = IO_PLAYER_KILL_NPC;
-				PostQueuedCompletionStatus(g_hIOCP, 0, k.other_id, &o->m_over);
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.target_id, &o->m_over);
 				break;
 			}
 

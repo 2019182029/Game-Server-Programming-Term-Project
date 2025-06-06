@@ -3,10 +3,11 @@
 #include <WS2tcpip.h>
 #include <windows.h>
 #include <tchar.h>
+#include <chrono>
 #include <iostream>
 #include <unordered_map>
 
-#include "..\protocol.h"
+#include "..\Server\protocol.h"
 #include "EXP_OVER.h"
 
 #pragma comment(lib, "WS2_32.lib")
@@ -25,8 +26,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 
 //////////////////////////////////////////////////
 // Server
-constexpr short SERVER_PORT = 3000;
-
 RECT rect;
 SOCKET g_socket;
 EXP_OVER g_recv_over;
@@ -47,6 +46,14 @@ BITMAP player_bmp[6];
 short camera_x = 0;
 short camera_y = 0;
 
+struct pair_hash {
+	size_t operator()(const std::pair<short, short>& p) const {
+		return std::hash<int>()((p.first << 16) ^ p.second);
+	}
+};
+
+std::unordered_map<std::pair<short, short>, std::chrono::high_resolution_clock::time_point, pair_hash> attacked_coords;
+
 void print_ui(HDC hDC);
 
 class PLAYER {
@@ -57,16 +64,12 @@ public:
 	int	m_exp; int m_level;
 	char m_name[NAME_SIZE];
 
-	bool m_is_attacking;
-
 public:
 	PLAYER() {
 		m_id = -1;
 		m_x = 0; m_y = 0;
 		m_hp = 10; m_max_hp = 10;
 		m_exp = 0; m_level = 0;
-
-		m_is_attacking = false;
 	}
 
 	void update_camera() {
@@ -84,28 +87,41 @@ public:
 		update_camera();
 	}
 
-	void visualize_attack(HDC hDC, short x, short y) const {
-		HDC mDC = CreateCompatibleDC(hDC);
-		HBITMAP hBmp = CreateCompatibleBitmap(hDC, S_TILE_WIDTH, S_TILE_HEIGHT);
-		HGDIOBJ oldBmp = SelectObject(mDC, hBmp);
+	void attack() {
+		auto current_time = std::chrono::high_resolution_clock::now();
 
-		HBRUSH redBrush = CreateSolidBrush(RGB(255, 0, 0));
-		RECT rect = { 0, 0, S_TILE_WIDTH, S_TILE_HEIGHT };
-		FillRect(mDC, &rect, redBrush);
-		DeleteObject(redBrush);
+		switch (m_level) {
+		case PAWN:
+			attacked_coords[{ m_x - 1, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y - 1 }] = current_time;
+			break;
 
-		BLENDFUNCTION blend = {};
-		blend.BlendOp = AC_SRC_OVER;
-		blend.SourceConstantAlpha = 128;
-		blend.AlphaFormat = 0;
+		case BISHOP:
+			attacked_coords[{ m_x - 1, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x - 1, m_y + 1 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y + 1 }] = current_time;
+			break;
 
-		AlphaBlend(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
-			mDC, 0, 0, S_TILE_WIDTH, S_TILE_HEIGHT, blend);
+		case ROOK:
+			attacked_coords[{ m_x,	   m_y - 1 }] = current_time;
+			attacked_coords[{ m_x,     m_y + 1 }] = current_time;
+			attacked_coords[{ m_x - 1, m_y	   }] = current_time;
+			attacked_coords[{ m_x + 1, m_y     }] = current_time;
+			break;
 
-		SelectObject(mDC, oldBmp);
-		DeleteObject(hBmp);
-		DeleteDC(mDC);
-	};
+		case KING:
+			attacked_coords[{ m_x - 1, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x,     m_y - 1 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x - 1, m_y     }] = current_time;
+			attacked_coords[{ m_x + 1, m_y     }] = current_time;
+			attacked_coords[{ m_x - 1, m_y + 1 }] = current_time;
+			attacked_coords[{ m_x,     m_y + 1 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y + 1 }] = current_time;
+			break;
+		}
+	}
 
 	void print(HDC hDC, short x, short y) const {
 		HDC mDC = CreateCompatibleDC(hDC);
@@ -126,41 +142,6 @@ public:
 		nameRect.right = (x + 2) * S_TILE_WIDTH;
 
 		DrawTextA(hDC, m_name, -1, &nameRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-		// Visualize Attack
-		if (m_is_attacking) {
-			switch (m_level) {
-			case 0:
-				visualize_attack(hDC, x - 1, y - 1);
-				visualize_attack(hDC, x + 1, y - 1);
-				break;
-
-			case 1:
-				visualize_attack(hDC, x - 1, y - 1);
-				visualize_attack(hDC, x + 1, y - 1);
-				visualize_attack(hDC, x - 1, y + 1);
-				visualize_attack(hDC, x + 1, y + 1);
-				break;
-
-			case 2:
-				visualize_attack(hDC, x, y - 1);
-				visualize_attack(hDC, x, y + 1);
-				visualize_attack(hDC, x - 1, y);
-				visualize_attack(hDC, x + 1, y);
-				break;
-
-			case 3:
-				visualize_attack(hDC, x - 1, y - 1);
-				visualize_attack(hDC, x, y - 1);
-				visualize_attack(hDC, x + 1, y - 1);
-				visualize_attack(hDC, x - 1, y);
-				visualize_attack(hDC, x + 1, y);
-				visualize_attack(hDC, x - 1, y + 1);
-				visualize_attack(hDC, x, y + 1);
-				visualize_attack(hDC, x + 1, y + 1);
-				break;
-			}
-		}
 
 		SelectObject(mDC, hBitmap);
 		DeleteDC(mDC);
@@ -285,6 +266,29 @@ public:
 	BITMAP m_bmp[2];
 
 public:
+	void visualize_attack(HDC hDC, short x, short y) const {
+		HDC mDC = CreateCompatibleDC(hDC);
+		HBITMAP hBmp = CreateCompatibleBitmap(hDC, S_TILE_WIDTH, S_TILE_HEIGHT);
+		HGDIOBJ oldBmp = SelectObject(mDC, hBmp);
+
+		HBRUSH redBrush = CreateSolidBrush(RGB(255, 0, 0));
+		RECT rect = { 0, 0, S_TILE_WIDTH, S_TILE_HEIGHT };
+		FillRect(mDC, &rect, redBrush);
+		DeleteObject(redBrush);
+
+		BLENDFUNCTION blend = {};
+		blend.BlendOp = AC_SRC_OVER;
+		blend.SourceConstantAlpha = 128;
+		blend.AlphaFormat = 0;
+
+		AlphaBlend(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
+			mDC, 0, 0, S_TILE_WIDTH, S_TILE_HEIGHT, blend);
+
+		SelectObject(mDC, oldBmp);
+		DeleteObject(hBmp);
+		DeleteDC(mDC);
+	};
+
 	void print(HDC hDC) const {
 		for (short y = 0; y < S_VISIBLE_TILES; ++y) {
 			for (short x = 0; x < S_VISIBLE_TILES; ++x) {
@@ -303,10 +307,10 @@ public:
 
 				SelectObject(tileDC, hBitmap);
 				DeleteDC(tileDC);
-
-				
 			}
 		}
+
+		auto current_time = std::chrono::high_resolution_clock::now();
 
 		for (short y = 0; y < S_VISIBLE_TILES; ++y) {
 			for (short x = 0; x < S_VISIBLE_TILES; ++x) {
@@ -323,6 +327,19 @@ public:
 				// Player
 				if ((map_x == player.m_x) && (map_y == player.m_y)) {
 					player.print(hDC, x, y);
+				}
+
+				// Attacked Coords
+				auto it = attacked_coords.find({ map_x, map_y });
+
+				if (it != attacked_coords.end()) {
+
+					if ((current_time - it->second) < std::chrono::milliseconds(100)) {
+						visualize_attack(hDC, x, y);
+					} else {
+						// Delete Coords from Attacked Coords
+						attacked_coords.erase(it);
+					}
 				}
 			}
 		}
@@ -411,6 +428,12 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		std::cout << std::endl;
 
 		init_socket();
+
+		SetTimer(hWnd, 0, 16, NULL);
+		break;
+
+	case WM_TIMER:
+		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
 
 	case WM_CHAR:
@@ -436,7 +459,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			case VK_RETURN:
 				if (!chat_input.empty()) {
 					CS_CHAT_PACKET p;
-					p.size = sizeof(CS_CHAT_PACKET);
+					p.size = static_cast<unsigned char>(sizeof(CS_CHAT_PACKET));
 					p.type = CS_CHAT;
 					strcpy_s(p.mess, chat_input.c_str());
 					do_send(&p);
@@ -480,8 +503,9 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				CS_ATTACK_PACKET p;
 				p.size = sizeof(CS_ATTACK_PACKET);
 				p.type = CS_ATTACK;
-				player.m_is_attacking = true;
 				do_send(&p);
+
+				player.attack();
 				break;
 			}
 
@@ -497,15 +521,6 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				break;
 			}
 			}
-		}
-		InvalidateRect(g_hWnd, NULL, FALSE);
-		break;
-
-	case WM_KEYUP:
-		switch (wParam) {
-		case VK_SPACE: 
-			player.m_is_attacking = false;
-			break;
 		}
 		InvalidateRect(g_hWnd, NULL, FALSE);
 		break;
@@ -549,7 +564,7 @@ void init_socket() {
 
 	SOCKADDR_IN addr;
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(SERVER_PORT);
+	addr.sin_port = htons(PORT_NUM);
 	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
 	ret = WSAConnect(g_socket, reinterpret_cast<const sockaddr*>(&addr), sizeof(SOCKADDR_IN), NULL, NULL, NULL, NULL);
@@ -619,6 +634,7 @@ void process_packet(char* packet) {
 			player.m_y = p->y;
 			break;
 		}
+
 		if (others.count(p->id)) {
 			others.at(p->id).m_x = p->x;
 			others.at(p->id).m_y = p->y;
@@ -641,6 +657,14 @@ void process_packet(char* packet) {
 			if (chat_log.size() > MAX_CHAT_LINE) {
 				chat_log.erase(chat_log.begin());
 			}
+		}
+		break;
+	}
+
+	case SC_ATTACK: {
+		SC_ATTACK_PACKET * p = reinterpret_cast<SC_ATTACK_PACKET*>(packet);
+		if (others.count(p->id)) {
+			others.at(p->id).attack();
 		}
 		break;
 	}
