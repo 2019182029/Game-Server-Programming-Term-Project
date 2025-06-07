@@ -68,6 +68,7 @@ public:
 	int	m_hp; int m_max_hp;
 	int	m_exp; int m_level;
 	char m_name[NAME_SIZE];
+	bool m_is_alive;
 
 public:
 	PLAYER() {
@@ -75,6 +76,7 @@ public:
 		m_x = 0; m_y = 0;
 		m_hp = 10; m_max_hp = 10;
 		m_exp = 0; m_level = 0;
+		m_is_alive = true;
 	}
 
 	void update_camera() {
@@ -143,27 +145,29 @@ public:
 	}
 
 	void print(HDC hDC, short x, short y) const {
-		HDC mDC = CreateCompatibleDC(hDC);
-		HGDIOBJ hBitmap = SelectObject(mDC, player_hBitmap[m_level]);
+		if (m_is_alive) {
+			HDC mDC = CreateCompatibleDC(hDC);
+			HGDIOBJ hBitmap = SelectObject(mDC, player_hBitmap[m_level]);
 
-		// Character
-		TransparentBlt(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
-			mDC, 0, 0, player_bmp[m_level].bmWidth, player_bmp[m_level].bmHeight, RGB(255, 255, 255));
+			// Character
+			TransparentBlt(hDC, x * S_TILE_WIDTH, y * S_TILE_HEIGHT, S_TILE_WIDTH, S_TILE_HEIGHT,
+				mDC, 0, 0, player_bmp[m_level].bmWidth, player_bmp[m_level].bmHeight, RGB(255, 255, 255));
 
-		// Name
-		SetBkMode(hDC, TRANSPARENT);
-		SetTextColor(hDC, RGB(255, 255, 255)); 
+			// Name
+			SetBkMode(hDC, TRANSPARENT);
+			SetTextColor(hDC, RGB(255, 255, 255));
 
-		RECT nameRect;
-		nameRect.top = (y - 1) * S_TILE_HEIGHT;
-		nameRect.bottom = (y + 1) * S_TILE_HEIGHT;
-		nameRect.left = (x - 1) * S_TILE_WIDTH;
-		nameRect.right = (x + 2) * S_TILE_WIDTH;
+			RECT nameRect;
+			nameRect.top = (y - 1) * S_TILE_HEIGHT;
+			nameRect.bottom = (y + 1) * S_TILE_HEIGHT;
+			nameRect.left = (x - 1) * S_TILE_WIDTH;
+			nameRect.right = (x + 2) * S_TILE_WIDTH;
 
-		DrawTextA(hDC, m_name, -1, &nameRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+			DrawTextA(hDC, m_name, -1, &nameRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-		SelectObject(mDC, hBitmap);
-		DeleteDC(mDC);
+			SelectObject(mDC, hBitmap);
+			DeleteDC(mDC);
+		}
 	}
 };
 
@@ -542,26 +546,30 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			case VK_DOWN:
 			case VK_LEFT:
 			case VK_RIGHT: {
-				CS_MOVE_PACKET p;
-				p.size = sizeof(CS_MOVE_PACKET);
-				p.type = CS_MOVE;
-				switch (wParam) {
-				case VK_UP:    player.move( 0, -1);	p.direction = 0; break;
-				case VK_DOWN:  player.move( 0,  1);	p.direction = 1; break;
-				case VK_LEFT:  player.move(-1,  0);	p.direction = 2; break;
-				case VK_RIGHT: player.move( 1,  0);	p.direction = 3; break;
+				if (player.m_is_alive) {
+					CS_MOVE_PACKET p;
+					p.size = sizeof(CS_MOVE_PACKET);
+					p.type = CS_MOVE;
+					switch (wParam) {
+					case VK_UP:    player.move(0, -1);	p.direction = 0; break;
+					case VK_DOWN:  player.move(0, 1);	p.direction = 1; break;
+					case VK_LEFT:  player.move(-1, 0);	p.direction = 2; break;
+					case VK_RIGHT: player.move(1, 0);	p.direction = 3; break;
+					}
+					do_send(&p);
 				}
-				do_send(&p);
 				break;
 			}
 
 			case VK_SPACE: {
-				CS_ATTACK_PACKET p;
-				p.size = sizeof(CS_ATTACK_PACKET);
-				p.type = CS_ATTACK;
-				do_send(&p);
+				if (player.m_is_alive) {
+					CS_ATTACK_PACKET p;
+					p.size = sizeof(CS_ATTACK_PACKET);
+					p.type = CS_ATTACK;
+					do_send(&p);
 
-				player.attack();
+					player.attack();
+				}
 				break;
 			}
 
@@ -688,12 +696,23 @@ void process_packet(char* packet) {
 		if (player.m_id == p->id) {
 			player.m_x = p->x;
 			player.m_y = p->y;
+
+			if (false == player.m_is_alive) {
+				player.m_hp = player.m_max_hp;
+				player.m_is_alive = true;
+			}
+
+			player.update_camera();
 			break;
 		}
 
 		if (others.count(p->id)) {
 			others.at(p->id).m_x = p->x;
 			others.at(p->id).m_y = p->y;
+
+			if (false == others.at(p->id).m_is_alive) {
+				others.at(p->id).m_is_alive = true;
+			}
 		}
 		break;
 	}
@@ -733,12 +752,35 @@ void process_packet(char* packet) {
 
 	case SC_LEVEL_UP: {
 		SC_LEVEL_UP_PACKET* p = reinterpret_cast<SC_LEVEL_UP_PACKET*>(packet);
+
 		if (player.m_id == p->id) {
 			player.m_level = p->level;
 			break;
 		}
+
 		if (others.count(p->id)) {
 			others.at(p->id).m_level = p->level;
+		}
+		break;
+	}
+
+	case SC_DAMAGED: {
+		SC_DAMAGED_PACKET* p = reinterpret_cast<SC_DAMAGED_PACKET*>(packet);
+		player.m_hp = p->hp;
+		break;
+	}
+
+	case SC_DEATH: {
+		SC_DEATH_PACKET* p = reinterpret_cast<SC_DEATH_PACKET*>(packet);
+
+		if (player.m_id == p->id) {
+			player.m_hp = 0;
+			player.m_is_alive = false;
+			break;
+		}
+
+		if (others.count(p->id)) {
+			others.at(p->id).m_is_alive = false;
 		}
 		break;
 	}

@@ -67,7 +67,6 @@ constexpr char SC_EARN_EXP = 11;
 constexpr char SC_LEVEL_UP = 12;
 constexpr char SC_DAMAGED = 13;
 constexpr char SC_DEATH = 14;
-constexpr char SC_RESPAWN = 15;
 
 #pragma pack (push, 1)
 
@@ -194,13 +193,6 @@ struct SC_DEATH_PACKET {
 	unsigned char size;
 	char	type;
 	int		id;
-};
-
-struct SC_RESPAWN_PACKET {
-	unsigned char size;
-	char	type;
-	short	x;
-	short	y;
 };
 
 #pragma pack (pop)

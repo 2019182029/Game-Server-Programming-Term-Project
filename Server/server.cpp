@@ -150,6 +150,7 @@ void worker() {
 		switch (eo->m_io_type) {
 		case IO_ACCEPT: {
 			int client_id = g_new_id++;
+
 			std::shared_ptr<SESSION> p = std::make_shared<SESSION>(client_id, g_c_socket);
 			CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket), g_hIOCP, client_id, 0);
 			g_clients.insert(std::make_pair(client_id, p));
@@ -158,6 +159,7 @@ void worker() {
 			ZeroMemory(&g_accept_over.m_over, sizeof(g_accept_over.m_over));
 			g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 			int addr_size = sizeof(SOCKADDR_IN);
+
 			AcceptEx(g_s_socket, g_c_socket, g_accept_over.m_buffer, 0, addr_size + 16, addr_size + 16, 0, &g_accept_over.m_over);
 			break;
 		}
@@ -220,7 +222,7 @@ void worker() {
 			}
 
 			timer_lock.lock();
-			timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_PLAYER_RESPAWN });
+			timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_PLAYER_RESPAWN });
 			timer_lock.unlock();
 
 			delete eo;
@@ -235,8 +237,11 @@ void worker() {
 
 			short old_x = client->m_x;
 			short old_y = client->m_y;
-			short new_x = (rand() % W_WIDTH);
-			short new_y = (rand() % W_HEIGHT);
+
+			client->respawn();
+
+			short new_x = client->m_x;
+			short new_y = client->m_y;
 
 			client->m_x = new_x;
 			client->m_y = new_y;
@@ -272,7 +277,7 @@ void worker() {
 				}
 			}
 
-			client->send_respawn();
+			client->send_move_object(client_id);
 
 			for (auto& cl : near_list) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
@@ -315,21 +320,15 @@ void worker() {
 			if (nullptr == npc) { break; }
 
 			if (npc->m_is_active) {
-				do_npc_random_move(npc_id);
-			}
+				switch (npc->m_level) {
+				case KNIGHT:
+					do_npc_random_move(npc_id);
+					break;
 
-			delete eo;
-			break;
-		}
-
-		case IO_NPC_CHASE: {
-			int npc_id = static_cast<int>(key);
-
-			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
-			if (nullptr == npc) { break; }
-
-			if (npc->m_is_active) {
-				do_npc_chase(npc_id, eo->m_target_id);
+				case QUEEN:
+					do_npc_chase(npc_id, eo->m_target_id);
+					break;
+				}
 			}
 
 			delete eo;
@@ -991,14 +990,14 @@ void do_npc_random_move(int obj_id) {
 
 		if (KNIGHT_ATTACK_RANGE >= calc_distance_sq(npc->m_x, npc->m_y, other->m_x, other->m_y)) {
 			timer_lock.lock();
-			timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
+			timer_queue.emplace(event{ obj_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
 			timer_lock.unlock();
 			return;
 		}
 	}
 
 	timer_lock.lock();
-	timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
+	timer_queue.emplace(event{ obj_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
 	timer_lock.unlock();
 }
 
@@ -1060,7 +1059,14 @@ void do_npc_chase(int obj_id, int target_id) {
 	// Move
 	auto path = a_star(old_x, old_y, target_x, target_y);
 
-	if (path.size() < 2) { 
+	if (3 > path.size()) { 
+		if (QUEEN_ATTACK_RANGE >= calc_distance_sq(obj->m_x, obj->m_y, target->m_x, target->m_y)) {
+			timer_lock.lock();
+			timer_queue.emplace(event{ obj_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
+			timer_lock.unlock();
+			return;
+		}
+
 		obj->sleep();
 		return;
 	}
@@ -1129,29 +1135,16 @@ void do_npc_chase(int obj_id, int target_id) {
 			// 플레이어가 계속 보고 있음.
 			other->send_move_object(obj->m_id);
 		}
-
-		if (QUEEN_ATTACK_RANGE >= calc_distance_sq(obj->m_x, obj->m_y, other->m_x, other->m_y)) {
-			timer_lock.lock();
-			timer_queue.emplace(event{ obj->m_id, other->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
-			timer_lock.unlock();
-			return;
-		}
 	}
 
 	timer_lock.lock();
-	timer_queue.emplace(event{ obj->m_id, target->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(3), EV_NPC_CHASE });
+	timer_queue.emplace(event{ obj_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
 	timer_lock.unlock();
 }
 
 void do_npc_attack(int obj_id, int target_id) {
 	std::shared_ptr<SESSION> obj = g_clients.at(obj_id);
 	if (nullptr == obj) { return; }
-
-	std::shared_ptr<SESSION> target = g_clients.at(target_id);
-	if (nullptr == target) {
-		obj->sleep();
-		return;
-	}
 
 	short x = obj->m_x;
 	short y = obj->m_y;
@@ -1225,15 +1218,8 @@ void do_npc_attack(int obj_id, int target_id) {
 		}
 	}
 
-	if (QUEEN_ATTACK_RANGE >= calc_distance_sq(obj->m_x, obj->m_y, target->m_x, target->m_y)) {
-		timer_lock.lock();
-		timer_queue.emplace(event{ obj->m_id, target->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
-		timer_lock.unlock();
-		return;
-	}
-
 	timer_lock.lock();
-	timer_queue.emplace(event{ obj->m_id, target->m_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(3), EV_NPC_CHASE });
+	timer_queue.emplace(event{ obj_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
 	timer_lock.unlock();
 }
 
@@ -1374,13 +1360,6 @@ void do_timer() {
 			case EV_NPC_MOVE: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_NPC_MOVE;
-				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
-				break;
-			}
-
-			case EV_NPC_CHASE: {
-				EXP_OVER* o = new EXP_OVER;
-				o->m_io_type = IO_NPC_CHASE;
 				o->m_target_id = k.target_id;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 				break;

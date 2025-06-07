@@ -212,15 +212,6 @@ void SESSION::send_death(int c_id) {
 	do_send(&p);
 }
 
-void SESSION::send_respawn() {
-	SC_RESPAWN_PACKET p;
-	p.size = sizeof(SC_RESPAWN_PACKET);
-	p.type = SC_RESPAWN;
-	p.x = m_x;
-	p.y = m_y;
-	do_send(&p);
-}
-
 void SESSION::try_wake_up(int target_id) {
 	switch (m_level) {
 	case KNIGHT: {
@@ -244,19 +235,9 @@ void SESSION::wake_up(int target_id) {
 		bool expected = false;
 
 		if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
-			switch (m_level) {
-			case KNIGHT:
-				timer_lock.lock();
-				timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-				timer_lock.unlock();
-				break;
-
-			case QUEEN:
-				timer_lock.lock();
-				timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(3), EV_NPC_CHASE });
-				timer_lock.unlock();
-				break;
-			}
+			timer_lock.lock();
+			timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
+			timer_lock.unlock();
 		}
 	}
 }
@@ -289,12 +270,10 @@ void SESSION::receive_damage(int damage, int target_id) {
 }
 
 bool SESSION::is_alive() {
-	return (0 >= m_hp);
+	return (0 < m_hp);
 }
 
 void SESSION::respawn() {
-	m_state = ST_INGAME;
-
 	m_x = rand() % S_WIDTH;
 	m_y = rand() % S_HEIGHT;
 	m_hp = m_max_hp;
