@@ -193,6 +193,34 @@ void SESSION::send_level_up(int c_id) {
 	do_send(&p);
 }
 
+void SESSION::send_damaged(int hp) {
+	SC_DAMAGED_PACKET p;
+	p.size = sizeof(SC_DAMAGED_PACKET);
+	p.type = SC_DAMAGED;
+	p.hp = hp;
+	do_send(&p);
+}
+
+void SESSION::send_death(int c_id) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	SC_DEATH_PACKET p;
+	p.size = sizeof(SC_DEATH_PACKET);
+	p.type = SC_DEATH;
+	p.id = c_id;
+	do_send(&p);
+}
+
+void SESSION::send_respawn() {
+	SC_RESPAWN_PACKET p;
+	p.size = sizeof(SC_RESPAWN_PACKET);
+	p.type = SC_RESPAWN;
+	p.x = m_x;
+	p.y = m_y;
+	do_send(&p);
+}
+
 void SESSION::try_wake_up(int target_id) {
 	switch (m_level) {
 	case KNIGHT: {
@@ -241,16 +269,27 @@ void SESSION::receive_damage(int damage, int target_id) {
 	int prev_hp = m_hp.fetch_sub(damage);
 	int curr_hp = prev_hp - damage;
 
-	if ((0 <  prev_hp) &&
-		(0 >= curr_hp)) {
-		m_state = ST_DIE;
+	if ((0 < prev_hp) && (0 >= curr_hp)) { 
+		if (m_id < MAX_USER) {
+			timer_lock.lock();
+			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_PLAYER_DIE });
+			timer_lock.unlock();
+		} else {
+			sleep();
 
-		sleep();
-
-		timer_lock.lock();
-		timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE });
-		timer_lock.unlock();
+			timer_lock.lock();
+			timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE });
+			timer_lock.unlock();
+		}
+	} else {
+		if (m_id < MAX_USER) {
+			send_damaged(curr_hp);
+		}
 	}
+}
+
+bool SESSION::is_alive() {
+	return (0 >= m_hp);
 }
 
 void SESSION::respawn() {

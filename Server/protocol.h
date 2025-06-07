@@ -21,6 +21,8 @@ constexpr int QUEEN = 5;
 
 constexpr int AGGRO_RANGE = 3;
 constexpr int CHASE_RANGE = 7;
+constexpr int KNIGHT_ATTACK_RANGE = 5;
+constexpr int QUEEN_ATTACK_RANGE = 3;
 
 // Screen
 constexpr int S_WIDTH = 1000;
@@ -63,6 +65,9 @@ constexpr char SC_STAT_CHANGE = 9;
 constexpr char SC_ATTACK = 10;
 constexpr char SC_EARN_EXP = 11;
 constexpr char SC_LEVEL_UP = 12;
+constexpr char SC_DAMAGED = 13;
+constexpr char SC_DEATH = 14;
+constexpr char SC_RESPAWN = 15;
 
 #pragma pack (push, 1)
 
@@ -177,6 +182,25 @@ struct SC_LEVEL_UP_PACKET {
 	char	type;
 	int		id;
 	int		level;
+};
+
+struct SC_DAMAGED_PACKET {
+	unsigned char size;
+	char	type;
+	int		hp;
+};
+
+struct SC_DEATH_PACKET {
+	unsigned char size;
+	char	type;
+	int		id;
+};
+
+struct SC_RESPAWN_PACKET {
+	unsigned char size;
+	char	type;
+	short	x;
+	short	y;
 };
 
 #pragma pack (pop)

@@ -29,7 +29,8 @@ class SESSION;
 extern concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
 
 enum EVENT_TYPE { 
-	EV_NPC_MOVE, EV_NPC_CHASE, EV_NPC_DIE, EV_NPC_RESPAWN 
+	EV_PLAYER_DIE, EV_PLAYER_RESPAWN,
+	EV_NPC_MOVE, EV_NPC_CHASE, EV_NPC_ATTACK, EV_NPC_DIE, EV_NPC_RESPAWN 
 };
 
 struct event {
@@ -50,7 +51,8 @@ extern std::mutex timer_lock;
 // EXP_OVER
 enum IO_TYPE { 
 	IO_ACCEPT, IO_SEND, IO_RECV, 
-	IO_NPC_MOVE, IO_NPC_CHASE, IO_NPC_DIE, IO_NPC_RESPAWN 
+	IO_PLAYER_DIE, IO_PLAYER_RESPAWN,
+	IO_NPC_MOVE, IO_NPC_CHASE, IO_NPC_ATTACK, IO_NPC_DIE, IO_NPC_RESPAWN 
 };
 
 class EXP_OVER {
@@ -72,7 +74,7 @@ public:
 
 //////////////////////////////////////////////////
 // SESSION
-enum STATE { ST_ACCEPT, ST_INGAME, ST_CLOSE, ST_DIE };
+enum STATE { ST_ACCEPT, ST_INGAME, ST_CLOSE };
 class SESSION {
 public:
 	EXP_OVER m_recv_over{ IO_RECV };
@@ -115,10 +117,14 @@ public:
 	bool earn_exp(int& exp);
 	void send_earn_exp(int exp);
 	void send_level_up(int c_id);
+	void send_damaged(int hp);
+	void send_death(int c_id);
+	void send_respawn();
 
 	void try_wake_up(int target_id);
 	void wake_up(int target_id);
 	void sleep();
 	void receive_damage(int damage, int target_id);
+	bool is_alive();
 	void respawn();
 };

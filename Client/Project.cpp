@@ -110,6 +110,17 @@ public:
 			attacked_coords[{ m_x + 1, m_y + 1 }] = current_time;
 			break;
 
+		case KNIGHT:
+			attacked_coords[{ m_x - 1, m_y - 2 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y - 2 }] = current_time;
+			attacked_coords[{ m_x - 1, m_y + 2 }] = current_time;
+			attacked_coords[{ m_x + 1, m_y + 2 }] = current_time;
+			attacked_coords[{ m_x - 2, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x - 2, m_y + 1 }] = current_time;
+			attacked_coords[{ m_x + 2, m_y - 1 }] = current_time;
+			attacked_coords[{ m_x + 2, m_y + 1 }] = current_time;
+			break;
+
 		case ROOK:
 			attacked_coords[{ m_x,	   m_y - 1 }] = current_time;
 			attacked_coords[{ m_x,     m_y + 1 }] = current_time;
@@ -118,6 +129,7 @@ public:
 			break;
 
 		case KING:
+		case QUEEN:
 			attacked_coords[{ m_x - 1, m_y - 1 }] = current_time;
 			attacked_coords[{ m_x,     m_y - 1 }] = current_time;
 			attacked_coords[{ m_x + 1, m_y - 1 }] = current_time;
