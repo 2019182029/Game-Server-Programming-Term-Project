@@ -28,9 +28,22 @@ struct Node {
 	short x, y;
 	int g, h;
 	Node* parent;
+	bool in_use = false;
 
-	int f() const { return g + h; }
 	bool operator>(const Node& other) const { return f() > other.f(); }
+	int f() const { return g + h; }
+	void reset(short _x, short _y, int _g, int _h, Node* _parent) {
+		x = _x; y = _y;
+		g = _g; h = _h;
+		parent = _parent;
+		in_use = true;
+	}
+};
+
+struct Compare {
+	bool operator()(Node* a, Node* b) const {
+		return a->g + a->h > b->g + b->h;
+	}
 };
 
 void init_npc();
@@ -713,12 +726,14 @@ void do_npc_random_move(int obj_id) {
 			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
 
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+
 			for (auto cl : g_sector[ny][nx]) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) continue;
 
 				if (ST_INGAME != other->m_state) continue;
 				if (is_npc(other->m_id)) continue;
+
 				if (can_see(npc->m_id, other->m_id)) { 
 					keep_alive = true;
 					old_vl.insert(other->m_id); 
@@ -781,13 +796,17 @@ void do_npc_random_move(int obj_id) {
 			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
 
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+
 			for (auto cl : g_sector[ny][nx]) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) continue;
 
 				if (ST_INGAME != other->m_state) continue;
 				if (is_npc(other->m_id)) continue;
-				if (can_see(npc->m_id, other->m_id)) { new_vl.insert(other->m_id); }
+
+				if (can_see(npc->m_id, other->m_id)) { 
+					new_vl.insert(other->m_id); 
+				}
 			}
 		}
 	}
@@ -827,9 +846,11 @@ void do_npc_random_move(int obj_id) {
 
 void do_npc_chase_move(int obj_id, int target_id) {
 	std::shared_ptr<SESSION> obj = g_clients.at(obj_id);
-	std::shared_ptr<SESSION> target = g_clients.at(target_id);
 
 	if (nullptr == obj) { return; }
+
+	std::shared_ptr<SESSION> target = g_clients.at(target_id);
+
 	if (nullptr == target) {
 		obj->sleep();
 		return;
@@ -950,7 +971,7 @@ void do_npc_chase_move(int obj_id, int target_id) {
 	}
 
 	timer_lock.lock();
-	timer_queue.emplace(event{ obj->m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_CHASE });
+	timer_queue.emplace(event{ obj->m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(3), EV_NPC_CHASE });
 	timer_lock.unlock();
 }
 
@@ -961,12 +982,46 @@ int heuristic(int x1, int y1, int x2, int y2) {
 std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short gy) {
 	using p = std::pair<short, short>;
 
-	std::priority_queue <Node*, std::vector<Node*>, decltype([](Node* a, Node* b) { return *a > *b; })> open;
+	// Node Pool
+	static thread_local std::deque<Node> node_pool;
+	static thread_local std::vector<Node*> free_nodes;
+
+	std::priority_queue<Node*, std::vector<Node*>, Compare> open;
 	std::unordered_map<int, Node*> visited;
 
 	auto hash = [](int x, int y) { return y * W_WIDTH + x; };
 
-	Node* start = new Node{ sx, sy, 0, heuristic(sx, sy, gx, gy), nullptr };
+	auto reset_pool = [&]() {
+		free_nodes.clear();
+
+		if (node_pool.size() > 512) {
+			node_pool.resize(512);
+		}
+
+		for (auto& node : node_pool) {
+			node.in_use = false;
+			free_nodes.emplace_back(&node);
+		}
+	};
+
+	auto alloc_node = [&](short x, short y, int g, int h, Node* parent) -> Node* {
+		// Find Reusable Node
+		if (!free_nodes.empty()) {
+			Node* n = free_nodes.back();
+			free_nodes.pop_back();
+			n->reset(x, y, g, h, parent);
+			return n;
+		}
+
+		node_pool.emplace_back(); 
+		Node* n = &node_pool.back();
+		n->reset(x, y, g, h, parent);
+		return n;
+	};
+
+	reset_pool();
+
+	Node* start = alloc_node(sx, sy, 0, heuristic(sx, sy, gx, gy), nullptr);
 	open.push(start);
 	visited[hash(sx, sy)] = start;
 
@@ -994,10 +1049,6 @@ std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short 
 
 			std::reverse(path.begin(), path.end());
 
-			for (auto& [_, node] : visited) {
-				delete node;
-			}
-
 			return path;
 		}
 
@@ -1011,17 +1062,14 @@ std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short 
 
 				int key = hash(nx, ny);
 
-				if ((visited.contains(key)) && (visited[key]->g <= g)) { continue; }
+				if ((visited.contains(key)) && 
+					(visited[key]->g <= g)) { continue; }
 
-				Node* next = new Node{ nx, ny, g, h, curr };
+				Node* next = alloc_node(nx, ny, g, h, curr);
 				visited[key] = next;
 				open.push(next);
 			}
 		}
-	}
-
-	for (auto& [_, node] : visited) {
-		delete node;
 	}
 
 	return {};

@@ -196,7 +196,7 @@ void SESSION::send_level_up(int c_id) {
 void SESSION::try_wake_up(int target_id) {
 	switch (m_level) {
 	case KNIGHT: {
-		wake_up(INVALID_ID);
+		wake_up(target_id);
 		break;
 	}
 
@@ -225,7 +225,7 @@ void SESSION::wake_up(int target_id) {
 
 			case QUEEN:
 				timer_lock.lock();
-				timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_CHASE });
+				timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(3), EV_NPC_CHASE });
 				timer_lock.unlock();
 				break;
 			}

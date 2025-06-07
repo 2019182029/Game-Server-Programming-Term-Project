@@ -128,6 +128,18 @@ void SendPacket(int cl, void* packet)
 void ProcessPacket(int ci, unsigned char packet[])
 {
 	switch (packet[1]) {
+	case SC_LOGIN_INFO:	{
+		g_clients[ci].connected = true;
+		active_clients++;
+		SC_LOGIN_INFO_PACKET* login_packet = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(packet);
+		int my_id = ci;
+		client_map[login_packet->id] = my_id;
+		g_clients[my_id].id = login_packet->id;
+		g_clients[my_id].x = login_packet->x;
+		g_clients[my_id].y = login_packet->y;
+		break;
+	}
+
 	case SC_MOVE_OBJECT: {
 		SC_MOVE_OBJECT_PACKET* move_packet = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(packet);
 		if (move_packet->id < MAX_CLIENTS) {
@@ -145,34 +157,11 @@ void ProcessPacket(int ci, unsigned char packet[])
 				}
 			}
 		}
+		break;
 	}
-	break;
-	
-	case SC_ADD_OBJECT: break;
-	case SC_REMOVE_OBJECT: break;
-	case SC_CHAT: break;
-	
-	case SC_LOGIN_INFO:
-	{
-		//cout << ci << " Login Succed.\n";
 
-		g_clients[ci].connected = true;
-		active_clients++;
-		SC_LOGIN_INFO_PACKET* login_packet = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(packet);
-		int my_id = ci;
-		client_map[login_packet->id] = my_id;
-		g_clients[my_id].id = login_packet->id;
-		g_clients[my_id].x = login_packet->x;
-		g_clients[my_id].y = login_packet->y;
-
-		//cs_packet_teleport t_packet;
-		//t_packet.size = sizeof(t_packet);
-		//t_packet.type = CS_TELEPORT;
-		//SendPacket(my_id, &t_packet);
-	}
-	break;
-	default: MessageBox(hWnd, L"Unknown Packet Type", L"ERROR", 0);
-		while (true);
+	default: 
+		break;
 	}
 }
 
