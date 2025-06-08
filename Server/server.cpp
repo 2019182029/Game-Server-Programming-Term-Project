@@ -222,11 +222,11 @@ void worker() {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
+				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
 				if (other->m_id == client_id) { continue; }
-				if (!can_see(client_id, other->m_id)) { continue; }
 
-				if (is_player(cl)) {
+				if (true == can_see(client_id, other->m_id)) {
 					other->send_death(client_id);
 				}
 			}
@@ -282,7 +282,10 @@ void worker() {
 
 						if (ST_INGAME != other->m_state) { continue; }
 						if (other->m_id == client_id) { continue; }
-						if (can_see(client_id, other->m_id)) { near_list.insert(other->m_id); }
+
+						if (true == can_see(client_id, other->m_id)) { 
+							near_list.insert(other->m_id); 
+						}
 					}
 				}
 			}
@@ -375,7 +378,7 @@ void worker() {
 			int sy = npc->m_y / SECTOR_HEIGHT;
 
 			// Create View List by Sector
-			std::unordered_set<int> near_list;
+			std::unordered_set<int> npc_vl;
 			for (int dy = -1; dy <= 1; ++dy) {
 				for (int dx = -1; dx <= 1; ++dx) {
 					short nx = sx + dx;
@@ -387,21 +390,20 @@ void worker() {
 						std::shared_ptr<SESSION> other = g_clients.at(cl);
 						if (nullptr == other) { continue; }
 
+						if (false == is_player(other->m_id)) { continue; }
 						if (ST_INGAME != other->m_state) { continue; }
 						if (other->m_id == npc->m_id) { continue; }
-						if (can_see(npc->m_id, other->m_id)) { near_list.insert(other->m_id); }
+
+						if (can_see(npc->m_id, other->m_id)) { 
+							npc_vl.insert(other->m_id);
+						}
 					}
 				}
 			}
 
-			for (auto& cl : near_list) {
+			for (auto& cl : npc_vl) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) continue;
-
-				if (is_npc(cl)) continue;
-
-				if (ST_INGAME != other->m_state) continue;
-				if (other->m_id == npc->m_id) continue;
 
 				other->send_remove_object(npc->m_id);
 			}
@@ -431,19 +433,20 @@ void worker() {
 			if (level_up) {
 				// Send Level Up Packet to Player
 				client->m_vl.lock();
-				std::unordered_set<int> vlist = client->m_view_list;
+				std::unordered_set<int> client_vl = client->m_view_list;
 				client->m_vl.unlock();
 
 				client->send_level_up(client_id);
 
-				for (auto& cl : vlist) {
+				for (auto& cl : client_vl) {
 					std::shared_ptr<SESSION> other = g_clients.at(cl);
 					if (nullptr == other) continue;
 
+					if (false == is_player(other->m_id)) { continue; }
 					if (ST_INGAME != other->m_state) { continue; }
-					if (!can_see(client_id, other->m_id)) { continue; }
+					if (other->m_id == client_id) { continue; }
 
-					if (is_player(cl)) {
+					if (true == can_see(client_id, other->m_id)) {
 						other->send_level_up(client_id);
 					}
 				}
@@ -464,6 +467,7 @@ void worker() {
 			// Add Npc into Sector
 			short sx = npc->m_x / SECTOR_WIDTH;
 			short sy = npc->m_y / SECTOR_HEIGHT;
+
 			{
 				std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
 				g_sector[sy][sx].insert(npc_id);
@@ -482,11 +486,11 @@ void worker() {
 						std::shared_ptr<SESSION> other = g_clients.at(cl);
 						if (nullptr == other) { continue; }
 
+						if (false == is_player(other->m_id)) { continue; }
 						if (ST_INGAME != other->m_state) { continue; }
 						if (other->m_id == npc_id) { continue; }
-						if (!can_see(npc_id, other->m_id)) { continue; }
 
-						if (is_player(other->m_id)) { 
+						if (true == can_see(npc_id, other->m_id)) {
 							other->send_add_object(npc_id);
 							npc->try_wake_up(other->m_id);
 						}
@@ -510,16 +514,18 @@ void disconnect(int c_id) {
 	client->m_vl.lock();
 	std::unordered_set <int> vl = client->m_view_list;
 	client->m_vl.unlock();
+
 	for (auto& cl : vl) {
 		std::shared_ptr<SESSION> other = g_clients.at(cl);
 		if (nullptr == other) continue;
 
-		if (is_npc(cl)) continue;
-
+		if (false == is_player(other->m_id)) { continue; }
 		if (ST_INGAME != other->m_state) continue;
 		if (other->m_id == c_id) continue;
 
-		other->send_remove_object(c_id);
+		if (true == can_see(c_id, other->m_id)) {
+			other->send_remove_object(c_id);
+		}
 	}
 
 	// Delete Client from Sector
@@ -569,11 +575,16 @@ void process_packet(int c_id, char* packet) {
 
 					if (ST_INGAME != other->m_state) { continue; }
 					if (other->m_id == c_id) { continue; }
-					if (!can_see(c_id, other->m_id)) { continue; }
 
-					client->send_add_object(other->m_id);
-					if (is_player(other->m_id)) { other->send_add_object(c_id); }
-					else { other->try_wake_up(c_id); }
+					if (true == can_see(c_id, other->m_id)) {
+						client->send_add_object(other->m_id);
+
+						if (is_player(other->m_id)) { 
+							other->send_add_object(c_id); 
+						} else { 
+							other->try_wake_up(c_id); 
+						}
+					}
 				}
 			}
 		}
@@ -591,11 +602,11 @@ void process_packet(int c_id, char* packet) {
 			std::shared_ptr<SESSION> other = g_clients.at(cl);
 			if (nullptr == other) continue;
 
+			if (false == is_player(other->m_id)) { continue; }
 			if (ST_INGAME != other->m_state) { continue; }
 			if (other->m_id == c_id) { continue; }
-			if (!can_see(c_id, other->m_id)) { continue; }
 
-			if (is_player(cl)) {
+			if (true == can_see(c_id, other->m_id)) {
 				other->send_chat(c_id, p->mess);
 			}
 		}
@@ -645,6 +656,7 @@ void process_packet(int c_id, char* packet) {
 		client->m_vl.lock();
 		std::unordered_set<int> old_vlist = client->m_view_list;
 		client->m_vl.unlock();
+
 		for (int dy = -1; dy <= 1; ++dy) {
 			for (int dx = -1; dx <= 1; ++dx) {
 				short nx = sx + dx;
@@ -658,7 +670,10 @@ void process_packet(int c_id, char* packet) {
 
 					if (ST_INGAME != other->m_state) { continue; }
 					if (other->m_id == c_id) { continue; }
-					if (can_see(c_id, other->m_id)) { near_list.insert(other->m_id); }
+
+					if (true == can_see(c_id, other->m_id)) { 
+						near_list.insert(other->m_id); 
+					}
 				}
 			}
 		}
@@ -674,8 +689,7 @@ void process_packet(int c_id, char* packet) {
 				if (other->m_view_list.count(c_id)) {
 					other->m_vl.unlock();
 					other->send_move_object(c_id);
-				}
-				else {
+				} else {
 					other->m_vl.unlock();
 					other->send_add_object(c_id);
 				}
@@ -692,7 +706,10 @@ void process_packet(int c_id, char* packet) {
 
 			if (!near_list.count(cl)) {
 				client->send_remove_object(cl);
-				if (is_player(cl)) { other->send_remove_object(c_id); }
+
+				if (is_player(cl)) { 
+					other->send_remove_object(c_id); 
+				}
 			}
 		}
 		break;
@@ -764,11 +781,11 @@ void process_packet(int c_id, char* packet) {
 				std::shared_ptr<SESSION> npc = g_clients.at(cl);
 				if (nullptr == npc) continue;
 
+				if (false == is_npc(npc->m_id)) { continue; }
 				if (ST_INGAME != npc->m_state) { continue; }
 				if (npc->m_id == c_id) { continue; }
-				if (!can_see(c_id, npc->m_id)) { continue; }
 
-				if (is_npc(npc->m_id)) {
+				if (true == can_see(c_id, npc->m_id)) {
 					for (const auto& coord : attacked_coords) {
 						if ((coord.first == npc->m_x) && (coord.second == npc->m_y)) {
 							npc->receive_damage(1 + level, c_id);
@@ -787,10 +804,11 @@ void process_packet(int c_id, char* packet) {
 			std::shared_ptr<SESSION> other = g_clients.at(cl);
 			if (nullptr == other) continue;
 
+			if (false == is_player(other->m_id)) { continue; }
 			if (ST_INGAME != other->m_state) { continue; }
-			if (!can_see(c_id, other->m_id)) { continue; }
+			if (other->m_id == c_id) { continue; }
 
-			if (is_player(cl)) {
+			if (true == can_see(c_id, other->m_id)) {
 				other->send_attack(c_id);
 			}
 		}
@@ -936,9 +954,11 @@ void do_npc_chase(int c_id, int target_id) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (is_npc(other->m_id)) { continue; }
+				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
-				if (can_see(npc->m_id, other->m_id)) {
+				if (other->m_id == npc->m_id) { continue; }
+
+				if (true == can_see(npc->m_id, other->m_id)) {
 					old_vl.insert(other->m_id);
 				}
 			}
@@ -973,6 +993,7 @@ void do_npc_chase(int c_id, int target_id) {
 
 	// Create New View List by Sector
 	std::unordered_set<int> new_vl;
+
 	for (int dy = -1; dy <= 1; ++dy) {
 		for (int dx = -1; dx <= 1; ++dx) {
 			short nx = sx + dx;
@@ -985,9 +1006,13 @@ void do_npc_chase(int c_id, int target_id) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (is_npc(other->m_id)) { continue; }
+				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
-				if (can_see(npc->m_id, other->m_id)) { new_vl.insert(other->m_id); }
+				if (other->m_id == npc->m_id) { continue; }
+
+				if (true == can_see(npc->m_id, other->m_id)) { 
+					new_vl.insert(other->m_id); 
+				}
 			}
 		}
 	}
@@ -1088,20 +1113,22 @@ void do_npc_attack(int c_id, int target_id) {
 			std::shared_ptr<SESSION> client = g_clients.at(cl);
 			if (nullptr == client) continue;
 
-			if (is_npc(client->m_id)) { continue; }
+			if (false == is_player(c_id)) { continue; }
 			if (ST_INGAME != client->m_state) { continue; }
-			if (!can_see(c_id, client->m_id)) { continue; }
+			if (client->m_id == c_id) { continue; }
 
-			if ((client->m_id == c_id) || (client->is_alive() == false)) { continue; }
-
-			for (const auto& coord : attacked_coords) {
-				if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
-					client->receive_damage(1, c_id);
+			if (true == can_see(c_id, client->m_id)) {
+				for (const auto& coord : attacked_coords) {
+					if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
+						if (true == client->is_alive()) {
+							client->receive_damage(1, c_id);
+						}
+					}
 				}
-			}
 
-			// Send Attack Packet to Player
-			client->send_attack(c_id);
+				// Send Attack Packet to Player
+				client->send_attack(c_id);
+			}
 		}
 	}
 
@@ -1376,9 +1403,11 @@ int API_do_npc_random_move(lua_State* L) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (is_npc(other->m_id)) { continue; }
+				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
-				if (can_see(npc->m_id, other->m_id)) {
+				if (other->m_id == npc_id) { continue; }
+
+				if (true == can_see(npc->m_id, other->m_id)) {
 					new_vl.insert(other->m_id);
 				}
 			}
@@ -1394,8 +1423,7 @@ int API_do_npc_random_move(lua_State* L) {
 			if (0 != other->m_view_list.count(npc->m_id)) {
 				other->m_vl.unlock();
 				other->send_remove_object(npc->m_id);
-			}
-			else {
+			} else {
 				other->m_vl.unlock();
 			}
 		}
@@ -1408,8 +1436,7 @@ int API_do_npc_random_move(lua_State* L) {
 		if (0 == old_vl.count(cl)) {
 			// 플레이어의 시야에 등장
 			other->send_add_object(npc->m_id);
-		}
-		else {
+		} else {
 			// 플레이어가 계속 보고 있음.
 			other->send_move_object(npc->m_id);
 		}
@@ -1485,9 +1512,11 @@ int API_get_vl(lua_State* L) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (is_npc(other->m_id)) { continue; }
+				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
-				if (can_see(npc->m_id, other->m_id)) {
+				if (other->m_id == npc_id) { continue; }
+
+				if (true == can_see(npc->m_id, other->m_id)) {
 					old_vl.insert(other->m_id);
 				}
 			}
