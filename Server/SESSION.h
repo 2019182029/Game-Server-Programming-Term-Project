@@ -133,5 +133,5 @@ public:
 	void sleep();
 	void receive_damage(int damage, int target_id);
 	bool is_alive();
-	void respawn();
+	void respawn(short x, short y);
 };

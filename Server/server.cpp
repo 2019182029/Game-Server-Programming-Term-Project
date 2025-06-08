@@ -53,7 +53,6 @@ bool is_player(int c_id);
 bool is_npc(int c_id);
 short calc_distance_sq(short npc_x, short npc_y, short player_x, short player_y);
 
-void do_npc_chase(int c_id, int target_id);
 void do_npc_attack(int c_id, int target_id);
 
 int heuristic(int x1, int y1, int x2, int y2);
@@ -74,9 +73,11 @@ bool is_valid_move(int x, int y);
 //////////////////////////////////////////////////
 // LUA
 int API_do_npc_random_move(lua_State* L);
+int API_do_npc_chase(lua_State* L);
 int API_do_npc_sleep(lua_State* L);
 int API_register_event(lua_State* L);
 int API_get_vl(lua_State* L);
+int API_is_in_chase_range(lua_State* L);
 int API_is_in_attack_range(lua_State* L);
 void push_vl(lua_State* L, const std::unordered_set<int>& view_list);
 
@@ -248,10 +249,14 @@ void worker() {
 			short old_x = client->m_x;
 			short old_y = client->m_y;
 
-			client->respawn();
+			short new_x, new_y;
 
-			short new_x = client->m_x;
-			short new_y = client->m_y;
+			do {
+				new_x = rand() % W_WIDTH;
+				new_y = rand() % W_HEIGHT;
+			} while (true == get_tile(new_x, new_y));
+
+			client->respawn(new_x, new_y);
 
 			client->m_x = new_x;
 			client->m_y = new_y;
@@ -336,16 +341,28 @@ void worker() {
 				switch (npc->m_level) {
 				case KNIGHT: {
 					auto L = npc->m_lua;
+
 					npc->m_lua_lock.lock();
+
 					lua_getglobal(L, "do_npc_random_move");
 					lua_pcall(L, 0, 0, 0);
+
 					npc->m_lua_lock.unlock();
 					break;
 				}
 
-				case QUEEN:
-					do_npc_chase(npc_id, eo->m_target_id);
+				case QUEEN: {
+					auto L = npc->m_lua;
+
+					npc->m_lua_lock.lock();
+
+					lua_getglobal(L, "do_npc_chase");
+					lua_pushnumber(L, eo->m_target_id);
+					lua_pcall(L, 1, 0, 0);
+
+					npc->m_lua_lock.unlock();
 					break;
+				}
 				}
 			}
 
@@ -373,6 +390,8 @@ void worker() {
 
 			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
 			if (nullptr == npc) break;
+
+			npc->sleep();
 
 			int sx = npc->m_x / SECTOR_WIDTH;
 			int sy = npc->m_y / SECTOR_HEIGHT;
@@ -462,7 +481,14 @@ void worker() {
 			std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
 			if (nullptr == npc) break;
 
-			npc->respawn();
+			short new_x, new_y;
+
+			do {
+				new_x = rand() % W_WIDTH;
+				new_y = rand() % W_HEIGHT;
+			} while (true == get_tile(new_x, new_y));
+
+			npc->respawn(new_x, new_y);
 
 			// Add Npc into Sector
 			short sx = npc->m_x / SECTOR_WIDTH;
@@ -856,8 +882,16 @@ void init_npc() {
 		// Session
 		std::shared_ptr<SESSION> p = std::make_shared<SESSION>(i);
 		p->m_state = ST_INGAME;
-		p->m_x = rand() % W_WIDTH;
-		p->m_y = rand() % W_HEIGHT;
+
+		short x, y;
+
+		do {
+			x = rand() % W_WIDTH;
+			y = rand() % W_HEIGHT;
+		} while (true == get_tile(x, y));
+
+		p->m_x = x;
+		p->m_y = y;
 		p->m_level = (rand() % 2) + KNIGHT;
 		snprintf(p->m_name, sizeof(p->m_name), "Npc %d", i);
 
@@ -875,9 +909,11 @@ void init_npc() {
 		lua_pcall(p->m_lua, 1, 0, 0);
 
 		lua_register(p->m_lua, "API_do_npc_random_move", API_do_npc_random_move);
+		lua_register(p->m_lua, "API_do_npc_chase", API_do_npc_chase);
 		lua_register(p->m_lua, "API_do_npc_sleep", API_do_npc_sleep);
 		lua_register(p->m_lua, "API_register_event", API_register_event);
 		lua_register(p->m_lua, "API_get_vl", API_get_vl);
+		lua_register(p->m_lua, "API_is_in_chase_range", API_is_in_chase_range);
 		lua_register(p->m_lua, "API_is_in_attack_range", API_is_in_attack_range);
 
 		// Add Npc into Sector
@@ -906,154 +942,6 @@ short calc_distance_sq(short npc_x, short npc_y, short player_x, short player_y)
 	short dy = (npc_y - player_y);
 
 	return (dx * dx) + (dy * dy);
-}
-
-void do_npc_chase(int c_id, int target_id) {
-	std::shared_ptr<SESSION> npc = g_clients.at(c_id);
-	if (nullptr == npc) { return; }
-
-	std::shared_ptr<SESSION> target = g_clients.at(target_id);
-	if (nullptr == target) {
-		npc->sleep();
-		return;
-	}
-
-	if (false == target->is_alive()) {
-		npc->sleep();
-		return;
-	}
-
-	short old_x = npc->m_x;
-	short old_y = npc->m_y;
-	short new_x = old_x;
-	short new_y = old_y;
-	short target_x = target->m_x;
-	short target_y = target->m_y;
-
-	if ((abs(old_x - target_x) > CHASE_RANGE) ||
-		(abs(old_y - target_y) > CHASE_RANGE)) {
-		npc->sleep();
-		return;
-	}
-
-	// Create Old View List by Sector
-	short sx = old_x / SECTOR_WIDTH;
-	short sy = old_y / SECTOR_HEIGHT;
-
-	std::unordered_set<int> old_vl;
-
-	for (short dy = -1; dy <= 1; ++dy) {
-		for (short dx = -1; dx <= 1; ++dx) {
-			short nx = sx + dx;
-			short ny = sy + dy;
-
-			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
-
-			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
-			for (auto cl : g_sector[ny][nx]) {
-				std::shared_ptr<SESSION> other = g_clients.at(cl);
-				if (nullptr == other) { continue; }
-
-				if (false == is_player(other->m_id)) { continue; }
-				if (ST_INGAME != other->m_state) { continue; }
-				if (other->m_id == npc->m_id) { continue; }
-
-				if (true == can_see(npc->m_id, other->m_id)) {
-					old_vl.insert(other->m_id);
-				}
-			}
-		}
-	}
-
-	// Move
-	auto path = a_star(old_x, old_y, target_x, target_y);
-
-	if (3 > path.size()) { 
-		if (QUEEN_ATTACK_RANGE >= calc_distance_sq(npc->m_x, npc->m_y, target->m_x, target->m_y)) {
-			timer_lock.lock();
-			timer_queue.emplace(event{ c_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
-			timer_lock.unlock();
-			return;
-		}
-
-		npc->sleep();
-		return;
-	}
-
-	auto [nx, ny] = path[1];
-
-	npc->m_x = new_x = nx;
-	npc->m_y = new_y = ny;
-
-	// Update Sector
-	sx = new_x / SECTOR_WIDTH;
-	sy = new_y / SECTOR_HEIGHT;
-
-	update_sector(c_id, old_x, old_y, new_x, new_y);
-
-	// Create New View List by Sector
-	std::unordered_set<int> new_vl;
-
-	for (int dy = -1; dy <= 1; ++dy) {
-		for (int dx = -1; dx <= 1; ++dx) {
-			short nx = sx + dx;
-			short ny = sy + dy;
-
-			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
-
-			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
-			for (auto cl : g_sector[ny][nx]) {
-				std::shared_ptr<SESSION> other = g_clients.at(cl);
-				if (nullptr == other) { continue; }
-
-				if (false == is_player(other->m_id)) { continue; }
-				if (ST_INGAME != other->m_state) { continue; }
-				if (other->m_id == npc->m_id) { continue; }
-
-				if (true == can_see(npc->m_id, other->m_id)) { 
-					new_vl.insert(other->m_id); 
-				}
-			}
-		}
-	}
-
-	for (auto cl : old_vl) {
-		std::shared_ptr<SESSION> other = g_clients.at(cl);
-		if (nullptr == other) {
-			npc->sleep();
-			return;
-		}
-
-		if (0 == new_vl.count(cl)) {
-			other->m_vl.lock();
-			if (0 != other->m_view_list.count(npc->m_id)) {
-				other->m_vl.unlock();
-				other->send_remove_object(npc->m_id);
-			} else {
-				other->m_vl.unlock();
-			}
-		}
-	}
-
-	for (auto cl : new_vl) {
-		std::shared_ptr<SESSION> other = g_clients.at(cl);
-		if (nullptr == other) {
-			npc->sleep();
-			return;
-		}
-
-		if (0 == old_vl.count(cl)) {
-			// 플레이어의 시야에 등장
-			other->send_add_object(npc->m_id);
-		} else {
-			// 플레이어가 계속 보고 있음.
-			other->send_move_object(npc->m_id);
-		}
-	}
-
-	timer_lock.lock();
-	timer_queue.emplace(event{ c_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-	timer_lock.unlock();
 }
 
 void do_npc_attack(int c_id, int target_id) {
@@ -1113,7 +1001,7 @@ void do_npc_attack(int c_id, int target_id) {
 			std::shared_ptr<SESSION> client = g_clients.at(cl);
 			if (nullptr == client) continue;
 
-			if (false == is_player(c_id)) { continue; }
+			if (false == is_player(client->m_id)) { continue; }
 			if (ST_INGAME != client->m_state) { continue; }
 			if (client->m_id == c_id) { continue; }
 
@@ -1416,7 +1304,7 @@ int API_do_npc_random_move(lua_State* L) {
 
 	for (auto cl : old_vl) {
 		std::shared_ptr<SESSION> other = g_clients.at(cl);
-		if (nullptr == other) { return 0; }
+		if (nullptr == other) { continue; }
 
 		if (0 == new_vl.count(cl)) {
 			other->m_vl.lock();
@@ -1431,7 +1319,7 @@ int API_do_npc_random_move(lua_State* L) {
 
 	for (auto cl : new_vl) {
 		std::shared_ptr<SESSION> other = g_clients.at(cl);
-		if (nullptr == other) { return 0; }
+		if (nullptr == other) { continue; }
 
 		if (0 == old_vl.count(cl)) {
 			// 플레이어의 시야에 등장
@@ -1445,6 +1333,109 @@ int API_do_npc_random_move(lua_State* L) {
 	push_vl(npc->m_lua, new_vl);
 
 	return 1;
+}
+
+int API_do_npc_chase(lua_State* L) {
+	// Lua
+	int npc_id = (int)lua_tonumber(L, -3);
+	int target_id = (int)lua_tonumber(L, -2);
+
+	std::unordered_set<int> old_vl;
+
+	for (int i = 1; i <= lua_rawlen(L, -1); ++i) {
+		lua_rawgeti(L, -1, i);
+		int id = (int)lua_tointeger(L, -1);
+		old_vl.insert(id);
+		lua_pop(L, 1);
+	}
+
+	lua_pop(L, 3);
+
+	// Move
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	std::shared_ptr<SESSION> client = g_clients.at(target_id);
+
+	if ((nullptr == npc) || (nullptr == client)) { 
+		return 0; 
+	}
+
+	auto path = a_star(npc->m_x, npc->m_y, client->m_x, client->m_y);
+
+	if (2 >= path.size()) {
+		return 0;
+	}
+
+	auto [nx, ny] = path[1];
+
+	short old_x = npc->m_x;
+	short old_y = npc->m_y;
+	short new_x = old_x;
+	short new_y = old_y;
+
+	npc->m_x = new_x = nx;
+	npc->m_y = new_y = ny;
+
+	// Update Sector
+	short sx = new_x / SECTOR_WIDTH;
+	short sy = new_y / SECTOR_HEIGHT;
+
+	update_sector(npc_id, old_x, old_y, new_x, new_y);
+
+	// Create New View List by Sector
+	std::unordered_set<int> new_vl;
+
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			short nx = sx + dx;
+			short ny = sy + dy;
+
+			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+			for (auto cl : g_sector[ny][nx]) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) { continue; }
+
+				if (false == is_player(other->m_id)) { continue; }
+				if (ST_INGAME != other->m_state) { continue; }
+				if (other->m_id == npc->m_id) { continue; }
+
+				if (true == can_see(npc->m_id, other->m_id)) {
+					new_vl.insert(other->m_id);
+				}
+			}
+		}
+	}
+
+	for (auto cl : old_vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) { continue; }
+
+		if (0 == new_vl.count(cl)) {
+			other->m_vl.lock();
+			if (0 != other->m_view_list.count(npc->m_id)) {
+				other->m_vl.unlock();
+				other->send_remove_object(npc->m_id);
+			} else {
+				other->m_vl.unlock();
+			}
+		}
+	}
+
+	for (auto cl : new_vl) {
+		std::shared_ptr<SESSION> other = g_clients.at(cl);
+		if (nullptr == other) { continue; }
+
+		if (0 == old_vl.count(cl)) {
+			// 플레이어의 시야에 등장
+			other->send_add_object(npc->m_id);
+		} else {
+			// 플레이어가 계속 보고 있음.
+			other->send_move_object(npc->m_id);
+		}
+	}
+
+	return 0;
 }
 
 int API_do_npc_sleep(lua_State* L) {
@@ -1528,6 +1519,32 @@ int API_get_vl(lua_State* L) {
 	return 1;
 }
 
+int API_is_in_chase_range(lua_State* L) {
+	int npc_id = (int)lua_tonumber(L, -2);
+	int target_id = (int)lua_tonumber(L, -1);
+
+	lua_pop(L, 2);
+
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	std::shared_ptr<SESSION> client = g_clients.at(target_id);
+
+	if ((nullptr == npc) || (nullptr == client)) { 
+		lua_pushboolean(L, false); 
+		return 1; 
+	}
+
+	if ((false == client->is_alive()) ||
+		(abs(npc->m_x - client->m_x) > CHASE_RANGE) ||
+		(abs(npc->m_y - client->m_y) > CHASE_RANGE)) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	lua_pushboolean(L, true);
+
+	return 1;
+}
+
 int API_is_in_attack_range(lua_State* L) {
 	int npc_id = (int)lua_tonumber(L, -2);
 	int target_id = (int)lua_tonumber(L, -1);
@@ -1537,20 +1554,23 @@ int API_is_in_attack_range(lua_State* L) {
 	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
 	std::shared_ptr<SESSION> client = g_clients.at(target_id);
 
-	if ((nullptr == npc) || (nullptr == client)) { return 0; }
+	if ((nullptr == npc) || (nullptr == client)) { 
+		lua_pushboolean(L, false); 
+		return 1; 
+	}
 
 	short dist = calc_distance_sq(npc->m_x, npc->m_y, client->m_x, client->m_y);
 
 	switch (npc->m_level) {
 	case KNIGHT:
-		if (KNIGHT_ATTACK_RANGE > dist) {
+		if (KNIGHT_ATTACK_RANGE >= dist) {
 			lua_pushboolean(L, true);
 			return 1;
 		}
 		break;
 
 	case QUEEN:
-		if (QUEEN_ATTACK_RANGE > dist) {
+		if (QUEEN_ATTACK_RANGE >= dist) {
 			lua_pushboolean(L, true);
 			return 1;
 		}

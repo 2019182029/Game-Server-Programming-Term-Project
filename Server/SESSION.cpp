@@ -47,8 +47,8 @@ SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
 
-	m_x = rand() % W_WIDTH;
-	m_y = rand() % W_HEIGHT;
+	m_x = 0;
+	m_y = 0;
 	m_hp = 10;
 	m_max_hp = 10;
 	m_exp = 0;
@@ -256,8 +256,6 @@ void SESSION::receive_damage(int damage, int target_id) {
 			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_PLAYER_DIE });
 			timer_lock.unlock();
 		} else {
-			sleep();
-
 			timer_lock.lock();
 			timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE });
 			timer_lock.unlock();
@@ -273,8 +271,8 @@ bool SESSION::is_alive() {
 	return (0 < m_hp);
 }
 
-void SESSION::respawn() {
-	m_x = rand() % S_WIDTH;
-	m_y = rand() % S_HEIGHT;
+void SESSION::respawn(short x, short y) {
+	m_x = x;
+	m_y = y;
 	m_hp = m_max_hp;
 }
