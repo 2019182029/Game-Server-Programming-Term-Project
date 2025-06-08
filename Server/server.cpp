@@ -1,6 +1,9 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include "SESSION.h"
+#include "include/lua.hpp"
+
+#pragma comment(lib, "lua54.lib")
 
 //////////////////////////////////////////////////
 // IOCP
@@ -864,7 +867,6 @@ void do_npc_random_move(int obj_id) {
 	int sy = old_y / SECTOR_HEIGHT;
 
 	bool keep_alive = false;
-
 	std::unordered_set<int> old_vl;
 
 	for (int dy = -1; dy <= 1; ++dy) {
@@ -872,17 +874,16 @@ void do_npc_random_move(int obj_id) {
 			short nx = sx + dx;
 			short ny = sy + dy;
 
-			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+			if ((nx < 0) || (ny < 0) || (nx >= SECTOR_COLS) || (ny >= SECTOR_ROWS)) { continue; }
 
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
 
 			for (auto cl : g_sector[ny][nx]) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
-				if (nullptr == other) continue;
+				if (nullptr == other) { continue; }
 
-				if (ST_INGAME != other->m_state) continue;
-				if (is_npc(other->m_id)) continue;
-
+				if (is_npc(other->m_id)) { continue; }
+				if (ST_INGAME != other->m_state) { continue; }
 				if (can_see(npc->m_id, other->m_id)) { 
 					keep_alive = true;
 					old_vl.insert(other->m_id); 
@@ -927,22 +928,26 @@ void do_npc_random_move(int obj_id) {
 		}
 	}
 
-	if (false == moved) { return; }
+	if (false == moved) { 
+		npc->sleep();
+		return; 
+	}
 
 	// Update Sector
-	sx = npc->m_x / SECTOR_WIDTH;
-	sy = npc->m_y / SECTOR_HEIGHT;
+	sx = new_x / SECTOR_WIDTH;
+	sy = new_y / SECTOR_HEIGHT;
 
 	update_sector(obj_id, old_x, old_y, new_x, new_y);
 
 	// Create New View List by Sector
 	std::unordered_set<int> new_vl;
+
 	for (int dy = -1; dy <= 1; ++dy) {
 		for (int dx = -1; dx <= 1; ++dx) {
 			short nx = sx + dx;
 			short ny = sy + dy;
 
-			if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+			if ((nx < 0) || (ny < 0) || (nx >= SECTOR_COLS) || (ny >= SECTOR_ROWS)) { continue; }
 
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
 
@@ -950,9 +955,8 @@ void do_npc_random_move(int obj_id) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (ST_INGAME != other->m_state) { continue; }
 				if (is_npc(other->m_id)) { continue; }
-
+				if (ST_INGAME != other->m_state) { continue; }
 				if (can_see(npc->m_id, other->m_id)) { 
 					new_vl.insert(other->m_id); 
 				}
@@ -969,8 +973,7 @@ void do_npc_random_move(int obj_id) {
 			if (0 != other->m_view_list.count(npc->m_id)) {
 				other->m_vl.unlock();
 				other->send_remove_object(npc->m_id);
-			}
-			else {
+			} else {
 				other->m_vl.unlock();
 			}
 		}
@@ -1047,8 +1050,8 @@ void do_npc_chase(int obj_id, int target_id) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (ST_INGAME != other->m_state) { continue; }
 				if (is_npc(other->m_id)) { continue; }
+				if (ST_INGAME != other->m_state) { continue; }
 				if (can_see(obj->m_id, other->m_id)) {
 					old_vl.insert(other->m_id);
 				}
@@ -1096,8 +1099,8 @@ void do_npc_chase(int obj_id, int target_id) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (ST_INGAME != other->m_state) { continue; }
 				if (is_npc(other->m_id)) { continue; }
+				if (ST_INGAME != other->m_state) { continue; }
 				if (can_see(obj->m_id, other->m_id)) { new_vl.insert(other->m_id); }
 			}
 		}
@@ -1199,22 +1202,20 @@ void do_npc_attack(int obj_id, int target_id) {
 			std::shared_ptr<SESSION> client = g_clients.at(cl);
 			if (nullptr == client) continue;
 
+			if (is_npc(client->m_id)) { continue; }
 			if (ST_INGAME != client->m_state) { continue; }
-			if (client->m_id == obj_id) { continue; }
 			if (!can_see(obj_id, client->m_id)) { continue; }
 
-			if (is_player(client->m_id)) {
-				if (false == client->is_alive()) { continue; }
+			if ((client->m_id == obj_id) || (client->is_alive() == false)) { continue; }
 
-				for (const auto& coord : attacked_coords) {
-					if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
-						client->receive_damage(1 + level, obj_id);
-					}
+			for (const auto& coord : attacked_coords) {
+				if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
+					client->receive_damage(1, obj_id);
 				}
-
-				// Send Attack Packet to Player
-				client->send_attack(obj_id);
 			}
+
+			// Send Attack Packet to Player
+			client->send_attack(obj_id);
 		}
 	}
 
