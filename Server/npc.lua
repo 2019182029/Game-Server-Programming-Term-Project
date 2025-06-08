@@ -69,24 +69,24 @@ function calc_attacked_coords(x, y)
         local deltas = {
             {-1, -2}, {1, -2}, {-1, 2}, {1, 2},
             {-2, -1}, {-2, 1}, {2, -1}, {2, 1}
-        }
+        };
 
         for _, d in ipairs(deltas) do
-            local dx, dy = d[1], d[2]
-            local nx, ny = x + dx, y + dy
+            local dx, dy = d[1], d[2];
+            local nx, ny = x + dx, y + dy;
 
             if nx >= 0 and nx < W_WIDTH and ny >= 0 and ny < W_HEIGHT then
-                table.insert(pattern, {nx, ny})
+                table.insert(pattern, {nx, ny});
             end
         end
     elseif QUEEN == npc_level then
         for dx = -1, 1 do
             for dy = -1, 1 do
                 if not (dx == 0 and dy == 0) then
-                    local nx, ny = x + dx, y + dy
+                    local nx, ny = x + dx, y + dy;
 
                     if nx >= 0 and nx < W_WIDTH and ny >= 0 and ny < W_HEIGHT then
-                        table.insert(pattern, {nx, ny})
+                        table.insert(pattern, {nx, ny});
                     end
                 end
             end

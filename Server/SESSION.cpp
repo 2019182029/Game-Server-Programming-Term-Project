@@ -47,8 +47,8 @@ SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
 
-	m_x = 0;
-	m_y = 0;
+	m_x = (rand() % W_WIDTH);
+	m_y = (rand() % W_HEIGHT);
 	m_hp = 10;
 	m_max_hp = 10;
 	m_exp = 0;
