@@ -53,8 +53,6 @@ bool is_player(int c_id);
 bool is_npc(int c_id);
 short calc_distance_sq(short npc_x, short npc_y, short player_x, short player_y);
 
-void do_npc_attack(int c_id, int target_id);
-
 int heuristic(int x1, int y1, int x2, int y2);
 std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short gy);
 
@@ -74,11 +72,14 @@ bool is_valid_move(int x, int y);
 // LUA
 int API_do_npc_random_move(lua_State* L);
 int API_do_npc_chase(lua_State* L);
+int API_do_npc_attack(lua_State* L);
 int API_do_npc_sleep(lua_State* L);
-int API_register_event(lua_State* L);
-int API_get_vl(lua_State* L);
 int API_is_in_chase_range(lua_State* L);
 int API_is_in_attack_range(lua_State* L);
+int API_get_x(lua_State* L);
+int API_get_y(lua_State* L);
+int API_get_vl(lua_State* L);
+int API_register_event(lua_State* L);
 void push_vl(lua_State* L, const std::unordered_set<int>& view_list);
 
 //////////////////////////////////////////////////
@@ -377,7 +378,16 @@ void worker() {
 			if (nullptr == npc) { break; }
 
 			if (npc->m_is_active) {
-				do_npc_attack(npc_id, eo->m_target_id);
+				auto L = npc->m_lua;
+
+				npc->m_lua_lock.lock();
+
+				lua_getglobal(L, "do_npc_attack");
+				lua_pushnumber(L, eo->m_target_id);
+				lua_pcall(L, 1, 0, 0);
+
+				npc->m_lua_lock.unlock();
+				break;
 			}
 
 			delete eo;
@@ -898,23 +908,24 @@ void init_npc() {
 		// Lua
 		p->m_lua = luaL_newstate();
 		luaL_openlibs(p->m_lua);
-
 		luaL_loadfile(p->m_lua, "npc.lua");
-
 		lua_pcall(p->m_lua, 0, 0, 0);
 
-		lua_getglobal(p->m_lua, "set_id");
+		lua_getglobal(p->m_lua, "init_npc");
 		lua_pushnumber(p->m_lua, i);
-
-		lua_pcall(p->m_lua, 1, 0, 0);
+		lua_pushnumber(p->m_lua, p->m_level);
+		lua_pcall(p->m_lua, 2, 0, 0);
 
 		lua_register(p->m_lua, "API_do_npc_random_move", API_do_npc_random_move);
 		lua_register(p->m_lua, "API_do_npc_chase", API_do_npc_chase);
+		lua_register(p->m_lua, "API_do_npc_attack", API_do_npc_attack);
 		lua_register(p->m_lua, "API_do_npc_sleep", API_do_npc_sleep);
-		lua_register(p->m_lua, "API_register_event", API_register_event);
-		lua_register(p->m_lua, "API_get_vl", API_get_vl);
 		lua_register(p->m_lua, "API_is_in_chase_range", API_is_in_chase_range);
 		lua_register(p->m_lua, "API_is_in_attack_range", API_is_in_attack_range);
+		lua_register(p->m_lua, "API_get_x", API_get_x);
+		lua_register(p->m_lua, "API_get_y", API_get_y);
+		lua_register(p->m_lua, "API_get_vl", API_get_vl);
+		lua_register(p->m_lua, "API_register_event", API_register_event);
 
 		// Add Npc into Sector
 		g_clients.insert(std::make_pair(p->m_id, p));
@@ -942,87 +953,6 @@ short calc_distance_sq(short npc_x, short npc_y, short player_x, short player_y)
 	short dy = (npc_y - player_y);
 
 	return (dx * dx) + (dy * dy);
-}
-
-void do_npc_attack(int c_id, int target_id) {
-	std::shared_ptr<SESSION> npc = g_clients.at(c_id);
-	if (nullptr == npc) { return; }
-
-	short x = npc->m_x;
-	short y = npc->m_y;
-	int level = npc->m_level;
-
-	// Get Attacked Coords
-	std::vector<std::pair<short, short>> attacked_coords;
-
-	switch (level) {
-	case KNIGHT:
-		if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y - 2) && (y - 2 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y - 2);
-		if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y - 2) && (y - 2 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y - 2);
-		if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y + 2) && (y + 2 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y + 2);
-		if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y + 2) && (y + 2 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y + 2);
-		if ((0 <= x - 2) && (x - 2 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 2, y - 1);
-		if ((0 <= x - 2) && (x - 2 < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 2, y + 1);
-		if ((0 <= x + 2) && (x + 2 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 2, y - 1);
-		if ((0 <= x + 2) && (x + 2 < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 2, y + 1);
-		break;
-
-	case QUEEN:
-		for (int dy = -1; dy <= 1; ++dy) {
-			for (int dx = -1; dx <= 1; ++dx) {
-				if ((dx == 0) && (dy == 0)) { continue; }
-
-				int nx = x + dx;
-				int ny = y + dy;
-
-				if ((0 <= nx) && (nx < W_WIDTH) && (0 <= ny) && (ny < W_HEIGHT)) {
-					attacked_coords.emplace_back(nx, ny);
-				}
-			}
-		}
-		break;
-	}
-
-	// Emplace Attacked Sectors into Ordered Set in order to Avoid Deadlock
-	std::set<std::pair<short, short>> attacked_sectors;
-	for (const auto& coord : attacked_coords) {
-		attacked_sectors.emplace(coord.first / SECTOR_WIDTH, coord.second / SECTOR_HEIGHT);
-	}
-
-	// Sector Lock
-	std::vector<std::unique_lock<std::mutex>> sector_locks;
-	for (const auto& sector : attacked_sectors) {
-		sector_locks.emplace_back(g_mutex[sector.second][sector.first]);
-	}
-
-	// Damage Logic
-	for (const auto& sector : attacked_sectors) {
-		for (const auto& cl : g_sector[sector.second][sector.first]) {
-			std::shared_ptr<SESSION> client = g_clients.at(cl);
-			if (nullptr == client) continue;
-
-			if (false == is_player(client->m_id)) { continue; }
-			if (ST_INGAME != client->m_state) { continue; }
-			if (client->m_id == c_id) { continue; }
-
-			if (true == can_see(c_id, client->m_id)) {
-				for (const auto& coord : attacked_coords) {
-					if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
-						if (true == client->is_alive()) {
-							client->receive_damage(1, c_id);
-						}
-					}
-				}
-
-				// Send Attack Packet to Player
-				client->send_attack(c_id);
-			}
-		}
-	}
-
-	timer_lock.lock();
-	timer_queue.emplace(event{ c_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-	timer_lock.unlock();
 }
 
 int heuristic(int x1, int y1, int x2, int y2) {
@@ -1438,6 +1368,80 @@ int API_do_npc_chase(lua_State* L) {
 	return 0;
 }
 
+int API_do_npc_attack(lua_State* L) {
+	// Lua
+	int npc_id = (int)lua_tonumber(L, -3);
+	int target_id = (int)lua_tonumber(L, -2);
+
+	std::vector<std::pair<short, short>> attacked_coords;
+
+	for (int i = 1; i <= lua_rawlen(L, 3); ++i) {
+		lua_rawgeti(L, 3, i); 
+
+		if (lua_istable(L, -1)) {
+			lua_rawgeti(L, -1, 1); // x
+			lua_rawgeti(L, -2, 2); // y
+
+			short x = (short)lua_tointeger(L, -2);
+			short y = (short)lua_tointeger(L, -1);
+
+			attacked_coords.emplace_back(x, y);
+			lua_pop(L, 2); // pop x and y
+		}
+
+		lua_pop(L, 1); // pop { x, y }
+	}
+
+	lua_pop(L, 3);
+
+	// Attack
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	std::shared_ptr<SESSION> client = g_clients.at(target_id);
+
+	if ((nullptr == npc) || (nullptr == client)) {
+		return 0;
+	}
+
+	// Emplace Attacked Sectors into Ordered Set in order to Avoid Deadlock
+	std::set<std::pair<short, short>> attacked_sectors;
+	for (const auto& coord : attacked_coords) {
+		attacked_sectors.emplace(coord.first / SECTOR_WIDTH, coord.second / SECTOR_HEIGHT);
+	}
+
+	// Sector Lock
+	std::vector<std::unique_lock<std::mutex>> sector_locks;
+	for (const auto& sector : attacked_sectors) {
+		sector_locks.emplace_back(g_mutex[sector.second][sector.first]);
+	}
+
+	// Damage Logic
+	for (const auto& sector : attacked_sectors) {
+		for (const auto& cl : g_sector[sector.second][sector.first]) {
+			std::shared_ptr<SESSION> client = g_clients.at(cl);
+			if (nullptr == client) { continue; }
+
+			if (false == is_player(client->m_id)) { continue; }
+			if (ST_INGAME != client->m_state) { continue; }
+			if (client->m_id == npc_id) { continue; }
+
+			if (true == can_see(npc_id, client->m_id)) {
+				for (const auto& coord : attacked_coords) {
+					if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
+						if (true == client->is_alive()) {
+							client->receive_damage(1, npc_id);
+						}
+					}
+				}
+
+				// Send Attack Packet to Player
+				client->send_attack(npc_id);
+			}
+		}
+	}
+
+	return 0;
+}
+
 int API_do_npc_sleep(lua_State* L) {
 	int npc_id = (int)lua_tonumber(L, -1);
 
@@ -1449,74 +1453,6 @@ int API_do_npc_sleep(lua_State* L) {
 	npc->sleep();
 
 	return 0;
-}
-
-int API_register_event(lua_State* L) {
-	int npc_id = (int)lua_tonumber(L, -3);
-	int target_id = (int)lua_tonumber(L, -2);
-	bool should_attack = (bool)lua_toboolean(L, -1);
-
-	lua_pop(L, 3);
-
-	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
-	if (nullptr == npc) { return 0; }
-
-	if (true == should_attack) {
-		timer_lock.lock();
-		timer_queue.emplace(event{ npc_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
-		timer_lock.unlock();
-
-		return 0;
-	}
-
-	timer_lock.lock();
-	timer_queue.emplace(event{ npc_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-	timer_lock.unlock();
-
-	return 0;
-}
-
-int API_get_vl(lua_State* L) {
-	int npc_id = (int)lua_tonumber(L, -1);
-
-	lua_pop(L, 1);
-
-	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
-	if (nullptr == npc) { return 0; }
-
-	// Create Old View List by Sector
-	short sx = npc->m_x / SECTOR_WIDTH;
-	short sy = npc->m_y / SECTOR_HEIGHT;
-
-	std::unordered_set<int> old_vl;
-
-	for (short dy = -1; dy <= 1; ++dy) {
-		for (short dx = -1; dx <= 1; ++dx) {
-			short nx = sx + dx;
-			short ny = sy + dy;
-
-			if ((nx < 0) || (ny < 0) || (nx >= SECTOR_COLS) || (ny >= SECTOR_ROWS)) { continue; }
-
-			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
-
-			for (auto cl : g_sector[ny][nx]) {
-				std::shared_ptr<SESSION> other = g_clients.at(cl);
-				if (nullptr == other) { continue; }
-
-				if (false == is_player(other->m_id)) { continue; }
-				if (ST_INGAME != other->m_state) { continue; }
-				if (other->m_id == npc_id) { continue; }
-
-				if (true == can_see(npc->m_id, other->m_id)) {
-					old_vl.insert(other->m_id);
-				}
-			}
-		}
-	}
-
-	push_vl(npc->m_lua, old_vl);
-
-	return 1;
 }
 
 int API_is_in_chase_range(lua_State* L) {
@@ -1580,6 +1516,104 @@ int API_is_in_attack_range(lua_State* L) {
 	lua_pushboolean(L, false);
 
 	return 1;
+}
+
+int API_get_x(lua_State* L) {
+	int npc_id = (int)lua_tointeger(L, -1);
+
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	if (nullptr == npc) { return -1; }
+
+	lua_pop(L, 1);
+
+	int x = npc->m_x;
+
+	lua_pushnumber(L, x);
+
+	return 1;
+}
+
+int API_get_y(lua_State* L) {
+	int npc_id = (int)lua_tointeger(L, -1);
+
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	if (nullptr == npc) { return -1; }
+
+	lua_pop(L, 1);
+
+	int y = npc->m_y;
+
+	lua_pushnumber(L, y);
+
+	return 1;
+}
+
+int API_get_vl(lua_State* L) {
+	int npc_id = (int)lua_tonumber(L, -1);
+
+	lua_pop(L, 1);
+
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	if (nullptr == npc) { return 0; }
+
+	// Create Old View List by Sector
+	short sx = npc->m_x / SECTOR_WIDTH;
+	short sy = npc->m_y / SECTOR_HEIGHT;
+
+	std::unordered_set<int> old_vl;
+
+	for (short dy = -1; dy <= 1; ++dy) {
+		for (short dx = -1; dx <= 1; ++dx) {
+			short nx = sx + dx;
+			short ny = sy + dy;
+
+			if ((nx < 0) || (ny < 0) || (nx >= SECTOR_COLS) || (ny >= SECTOR_ROWS)) { continue; }
+
+			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+
+			for (auto cl : g_sector[ny][nx]) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) { continue; }
+
+				if (false == is_player(other->m_id)) { continue; }
+				if (ST_INGAME != other->m_state) { continue; }
+				if (other->m_id == npc_id) { continue; }
+
+				if (true == can_see(npc->m_id, other->m_id)) {
+					old_vl.insert(other->m_id);
+				}
+			}
+		}
+	}
+
+	push_vl(npc->m_lua, old_vl);
+
+	return 1;
+}
+
+int API_register_event(lua_State* L) {
+	int npc_id = (int)lua_tonumber(L, -3);
+	int target_id = (int)lua_tonumber(L, -2);
+	bool should_attack = (bool)lua_toboolean(L, -1);
+
+	lua_pop(L, 3);
+
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	if (nullptr == npc) { return 0; }
+
+	if (true == should_attack) {
+		timer_lock.lock();
+		timer_queue.emplace(event{ npc_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
+		timer_lock.unlock();
+
+		return 0;
+	}
+
+	timer_lock.lock();
+	timer_queue.emplace(event{ npc_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
+	timer_lock.unlock();
+
+	return 0;
 }
 
 void push_vl(lua_State* L, const std::unordered_set<int>& view_list) {
