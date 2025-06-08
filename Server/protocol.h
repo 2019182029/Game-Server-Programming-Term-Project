@@ -8,7 +8,7 @@ constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 200000;
+constexpr int MAX_NPC = 2000;
 constexpr int INVALID_ID = -1;
 
 constexpr int PAWN = 0;

@@ -19,9 +19,11 @@
 #include <concurrent_unordered_map.h>
 
 #include "protocol.h"
+#include "include/lua.hpp"
 
 #pragma comment (lib, "WS2_32.LIB")
 #pragma comment (lib, "MSWSock.LIB")
+#pragma comment (lib, "lua54.lib")
 
 class EXP_OVER;
 class SESSION;
@@ -99,6 +101,9 @@ public:
 
 	std::atomic<bool> m_is_active;
 	unsigned int m_last_move_time;
+
+	lua_State* m_lua;
+	std::mutex m_lua_lock;
 
 public:
 	SESSION();
