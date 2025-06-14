@@ -58,6 +58,7 @@ constexpr char CS_TELEPORT = 5;			// RANDOM한 위치로 Teleport, Stress Test할 때 
 constexpr char CS_LOGOUT = 6;			// 클라이언트에서 정상적으로 접속을 종료하는 패킷
 constexpr char CS_SELECT_AVATAR = 7;
 constexpr char CS_CREATE_AVATAR = 8;
+constexpr char CS_USER_REGISTER = 9;
 
 constexpr char SC_LOGIN_INFO = 2;
 constexpr char SC_ADD_OBJECT = 3;
@@ -78,6 +79,7 @@ constexpr char NO_ID = -1;
 constexpr char WRONG_PW = -2;  
 constexpr char DUPLICATED = -3;  
 constexpr char EXEC_DIRECT = -4;
+constexpr char ALREADY_EXIST = -5;
 
 #pragma pack (push, 1)
 
@@ -118,6 +120,13 @@ struct CS_CREATE_AVATAR_PACKET {
 };
 
 struct CS_USER_LOGIN_PACKET {
+	unsigned char size;
+	char	type;
+	char	id[ID_SIZE];
+	char	pw[PW_SIZE];
+};
+
+struct CS_USER_REGISTER_PACKET {
 	unsigned char size;
 	char	type;
 	char	id[ID_SIZE];

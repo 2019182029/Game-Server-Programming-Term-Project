@@ -24,7 +24,7 @@ LPCTSTR lpszClass = L"Window Class";
 LPCTSTR lpszWindowName = L"Game Server Programming";
 
 HWND hText, hConnectEdit, hConnectButton;
-HWND hLoginIdText, hLoginPwText, hLoginIdEdit, hLoginPwEdit, hLoginButton;
+HWND hLoginIdText, hLoginPwText, hLoginIdEdit, hLoginPwEdit, hLoginButton, hRegisterButton;
 HWND hAvatarImage[3], hAvatarButton[3];
 
 bool bGameStart = false;
@@ -511,6 +511,28 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			break;
 		}
 
+		case 2004: {  // Register
+			char id_buffer[ID_SIZE] = {};
+			char pw_buffer[PW_SIZE] = {};
+
+			GetWindowTextA(hLoginIdEdit, id_buffer, ID_SIZE);
+			GetWindowTextA(hLoginPwEdit, pw_buffer, PW_SIZE);
+
+			strncpy_s(player.m_name, id_buffer, ID_SIZE - 1);
+
+			CS_USER_REGISTER_PACKET p;
+			p.size = sizeof(CS_USER_REGISTER_PACKET);
+			p.type = CS_USER_REGISTER;
+			strncpy_s(p.id, id_buffer, ID_SIZE - 1);
+			strncpy_s(p.pw, pw_buffer, PW_SIZE - 1);
+			do_send(&p);
+
+			DWORD recv_bytes;
+			DWORD recv_flag = 0;
+			auto ret = WSARecv(g_socket, g_recv_over.m_wsabuf, 1, &recv_bytes, &recv_flag, &g_recv_over.m_over, recv_callback);
+			break;
+		}
+
 		case 3000:
 		case 3001:
 		case 3002: {
@@ -683,9 +705,12 @@ void ShowLoginScreen(HWND hWnd) {
 	const int control_height = 25;
 	const int vertical_spacing = 15;
 	const int button_height = 30;
+	const int button_spacing = 20;
 
 	const int total_height = (control_height * 2) + (vertical_spacing * 2) + button_height;
+	const int total_button_width = (button_width * 2) + button_spacing;
 
+	int x = CenterX(total_button_width);
 	int y = CenterY(total_height);
 
 	hLoginIdText = CreateWindow(L"STATIC", L"ID :",
@@ -714,8 +739,13 @@ void ShowLoginScreen(HWND hWnd) {
 
 	hLoginButton = CreateWindow(L"BUTTON", L"Login",
 		WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-		CenterX(button_width), y, button_width, button_height,
+		x, y, button_width, button_height,
 		hWnd, (HMENU)2003, nullptr, nullptr);
+
+	hRegisterButton = CreateWindow(L"BUTTON", L"Register",
+		WS_CHILD | WS_VISIBLE,
+		x + button_width + button_spacing, y, button_width, button_height,
+		hWnd, (HMENU)2004, nullptr, nullptr);
 }
 
 HBITMAP ResizeBitmap(HBITMAP hBmp, int width, int height) {
@@ -764,6 +794,7 @@ void ShowAvatarSelectionScreen(HWND hWnd, const std::vector<AVATAR>& avatars) {
 	ShowWindow(hLoginPwText, SW_HIDE);
 	ShowWindow(hLoginPwEdit, SW_HIDE);
 	ShowWindow(hLoginButton, SW_HIDE);
+	ShowWindow(hRegisterButton, SW_HIDE);
 
 	const int avatar_size = 128;
 	const int spacing = 200;
@@ -941,6 +972,10 @@ void process_packet(char* packet) {
 
 		case EXEC_DIRECT:
 			MessageBox(g_hWnd, L"Failed to load user data", L"Error", MB_OK | MB_ICONERROR);
+			break;
+
+		case ALREADY_EXIST:
+			MessageBox(g_hWnd, L"ID already exist", L"Error", MB_OK | MB_ICONERROR);
 			break;
 		}
 		break;

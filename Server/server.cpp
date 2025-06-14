@@ -285,7 +285,7 @@ void worker() {
 			std::shared_ptr<SESSION> client = g_clients.at(client_id);
 			if (nullptr == client) { break; }
 			
-			client->send_login_fail(eo->error_code);
+			client->send_login_fail(eo->m_error_code);
 
 			delete eo;
 			break;
@@ -705,6 +705,19 @@ void process_packet(int c_id, char* packet) {
 		}
 
 		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_USER_LOGIN };
+		strncpy(q.client_id, p->id, ID_SIZE);
+		strncpy(q.client_pw, p->pw, PW_SIZE);
+
+		query_lock.lock();
+		query_queue.emplace(q);
+		query_lock.unlock();
+		break;
+	}
+
+	case CS_USER_REGISTER: {
+		CS_USER_LOGIN_PACKET* p = reinterpret_cast<CS_USER_LOGIN_PACKET*>(packet);
+
+		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_USER_REGISTER };
 		strncpy(q.client_id, p->id, ID_SIZE);
 		strncpy(q.client_pw, p->pw, PW_SIZE);
 
@@ -1306,16 +1319,16 @@ void do_query() {
 				std::wstring query = query_buf;
 
 				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query.c_str(), SQL_NTS);
-				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { 
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
 					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 					SQLCloseCursor(hstmt);
 					disconnect(q.obj_id);
-					break; 
+					break;
 				}
 
 				// Fetch
 				SQLFetch(hstmt);
-				
+
 				int avatar_id, x, y, exp, level, hp;
 
 				SQLGetData(hstmt, 1, SQL_C_SLONG, &avatar_id, 0, NULL);
@@ -1371,7 +1384,7 @@ void do_query() {
 
 					EXP_OVER* o = new EXP_OVER;
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->error_code = EXEC_DIRECT;
+					o->m_error_code = EXEC_DIRECT;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1391,7 +1404,7 @@ void do_query() {
 
 						EXP_OVER* o = new EXP_OVER;
 						o->m_io_type = IO_LOGIN_FAIL;
-						o->error_code = (-1 == account_id) ? NO_ID : WRONG_PW;
+						o->m_error_code = (-1 == account_id) ? NO_ID : WRONG_PW;
 						PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 
 						goto query_pop;
@@ -1399,6 +1412,71 @@ void do_query() {
 
 					avatars.emplace_back(AVATAR{ avatar_id, slot, level });
 				}
+
+				// Send
+				{
+					std::lock_guard<std::mutex> lock(g_id_lock);
+					g_ids.insert(std::stoi(q.client_id));
+				}
+
+				strncpy(client->m_name, q.client_id, ID_SIZE);
+				client->m_account_id = account_id;
+
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_LOGIN_OK;
+				o->m_avatars = std::move(avatars);
+				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+				SQLCloseCursor(hstmt);
+				break;
+			}
+
+			case QU_USER_REGISTER: {
+				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
+				if (nullptr == client) { break; }
+
+				// ExecDirect
+				std::wstring w_id = to_wstring(q.client_id);
+				std::wstring w_pw = to_wstring(q.client_pw);
+
+				wchar_t query_buf[256];
+				swprintf_s(query_buf, 256, L"EXEC sp_register_user N'%s', N'%s'", w_id.c_str(), w_pw.c_str());
+				std::wstring query = query_buf;
+
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query.c_str(), SQL_NTS);
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
+					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					o->m_error_code = EXEC_DIRECT;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				// Fetch
+				SQLFetch(hstmt);
+
+				std::vector<AVATAR> avatars;
+				int account_id, avatar_id, slot, level;
+
+				SQLGetData(hstmt, 1, SQL_C_SLONG, &account_id, 0, NULL);
+				SQLGetData(hstmt, 2, SQL_C_SLONG, &avatar_id, 0, NULL);
+				SQLGetData(hstmt, 3, SQL_C_SLONG, &slot, 0, NULL);
+				SQLGetData(hstmt, 4, SQL_C_SLONG, &level, 0, NULL);
+
+				if (-1 == account_id) {
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					o->m_error_code = ALREADY_EXIST;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				avatars.emplace_back(AVATAR{ avatar_id, slot, level });
 
 				// Send
 				{
@@ -1435,7 +1513,7 @@ void do_query() {
 
 					EXP_OVER* o = new EXP_OVER;
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->error_code = EXEC_DIRECT;
+					o->m_error_code = EXEC_DIRECT;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1484,7 +1562,7 @@ void do_query() {
 
 					EXP_OVER* o = new EXP_OVER;
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->error_code = EXEC_DIRECT;
+					o->m_error_code = EXEC_DIRECT;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
