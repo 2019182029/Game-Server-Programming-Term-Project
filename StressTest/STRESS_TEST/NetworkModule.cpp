@@ -137,6 +137,12 @@ void ProcessPacket(int ci, unsigned char packet[])
 		g_clients[my_id].id = login_packet->id;
 		g_clients[my_id].x = login_packet->x;
 		g_clients[my_id].y = login_packet->y;
+
+		CS_TELEPORT_PACKET p;
+		p.size = sizeof(CS_TELEPORT_PACKET);
+		p.type = CS_TELEPORT;
+		p.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
+		SendPacket(ci, &p);
 		break;
 	}
 

@@ -783,7 +783,7 @@ void process_packet(int c_id, char* packet) {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
 
 		if (false == client->is_alive()) {
-			// Send Packet in order to Prevent Cheating
+			// Send Rollback Packet in order to Prevent Cheating
 			client->send_move_object(c_id);
 			break;
 		}
@@ -803,7 +803,7 @@ void process_packet(int c_id, char* packet) {
 		}
 
 		if (false == is_valid_move(new_x, new_y)) {
-			// Send Packet in order to Prevent Cheating
+			// Send Rollback Packet in order to Prevent Cheating
 			client->send_move_object(c_id);
 			break;
 		}
@@ -881,101 +881,189 @@ void process_packet(int c_id, char* packet) {
 		break;
 	}
 
-	case CS_ATTACK:
-		if (false == client->is_alive()) { 
-			break; 
-		}
+	case CS_TELEPORT: {
+		CS_TELEPORT_PACKET* p = reinterpret_cast<CS_TELEPORT_PACKET*>(packet);
 
-		short x = client->m_x;
-		short y = client->m_y;
-		int level = client->m_level;
+		client->m_last_move_time = p->move_time;
 
-		// Get Attacked Coords
-		std::vector<std::pair<short, short>> attacked_coords;
+		short old_x = client->m_x;
+		short old_y = client->m_y;
+		short new_x = old_x;
+		short new_y = old_y;
 
-		switch (level) {
-		case PAWN:
-			if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y - 1);
-			if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y - 1);
-			break;
+		do {
+			new_x = rand() % W_WIDTH;
+			new_y = rand() % W_HEIGHT;
+		} while (true == get_tile(new_x, new_y));
 
-		case BISHOP:
-			if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y - 1);
-			if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y - 1);
-			if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y + 1);
-			if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y + 1);
-			break;
+		client->m_x = new_x;
+		client->m_y = new_y;
 
-		case ROOK:
-			if ((0 <= x) && (x < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x, y - 1);
-			if ((0 <= x) && (x < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x, y + 1);
-			if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y) && (y < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y);
-			if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y) && (y < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y);
-			break;
+		// Update Sector
+		update_sector(c_id, old_x, old_y, new_x, new_y);
 
-		case KING:
-			for (int dy = -1; dy <= 1; ++dy) {
-				for (int dx = -1; dx <= 1; ++dx) {
-					if ((dx == 0) && (dy == 0)) { continue; }
+		int sx = client->m_x / SECTOR_WIDTH;
+		int sy = client->m_y / SECTOR_HEIGHT;
 
-					int nx = x + dx;
-					int ny = y + dy;
+		// Create View List by Sector
+		std::unordered_set<int> near_list;
+		client->m_vl.lock();
+		std::unordered_set<int> old_vlist = client->m_view_list;
+		client->m_vl.unlock();
 
-					if ((0 <= nx) && (nx < W_WIDTH) && (0 <= ny) && (ny < W_HEIGHT)) {
-						attacked_coords.emplace_back(nx, ny);
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				short nx = sx + dx;
+				short ny = sy + dy;
+
+				if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+				for (auto cl : g_sector[ny][nx]) {
+					std::shared_ptr<SESSION> other = g_clients.at(cl);
+					if (nullptr == other) { continue; }
+
+					if (ST_INGAME != other->m_state) { continue; }
+					if (other->m_id == c_id) { continue; }
+
+					if (true == can_see(c_id, other->m_id)) {
+						near_list.insert(other->m_id);
 					}
 				}
 			}
-			break;
-		}
-		
-		// Emplace Attacked Sectors into Ordered Set in order to Avoid Deadlock
-		std::set<std::pair<short, short>> attacked_sectors;
-		for (const auto& coord : attacked_coords) {
-			attacked_sectors.emplace(coord.first / SECTOR_WIDTH, coord.second / SECTOR_HEIGHT);
 		}
 
-		// Sector Lock
-		std::vector<std::unique_lock<std::mutex>> sector_locks; 
-		for (const auto& sector : attacked_sectors) {
-			sector_locks.emplace_back(g_mutex[sector.second][sector.first]);
+		client->send_move_object(c_id);
+
+		for (auto& cl : near_list) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) { continue; }
+
+			if (is_player(cl)) {
+				other->m_vl.lock();
+				if (other->m_view_list.count(c_id)) {
+					other->m_vl.unlock();
+					other->send_move_object(c_id);
+				}
+				else {
+					other->m_vl.unlock();
+					other->send_add_object(c_id);
+				}
+			}
+			else {
+				other->try_wake_up(c_id);
+			}
+
+			if (!old_vlist.count(cl)) { client->send_add_object(cl); }
 		}
 
-		// Damage Logic
-		for (const auto& sector : attacked_sectors) {
-			for (const auto& cl : g_sector[sector.second][sector.first]) {
-				std::shared_ptr<SESSION> npc = g_clients.at(cl);
-				if (nullptr == npc) continue;
+		for (auto& cl : old_vlist) {
+			std::shared_ptr<SESSION> other = g_clients.at(cl);
+			if (nullptr == other) { continue; }
 
-				if (false == is_npc(npc->m_id)) { continue; }
-				if (ST_INGAME != npc->m_state) { continue; }
-				if (npc->m_id == c_id) { continue; }
+			if (!near_list.count(cl)) {
+				client->send_remove_object(cl);
 
-				if (true == can_see(c_id, npc->m_id)) {
-					for (const auto& coord : attacked_coords) {
-						if ((coord.first == npc->m_x) && (coord.second == npc->m_y)) {
-							npc->receive_damage(1 + level, c_id);
+				if (is_player(cl)) {
+					other->send_remove_object(c_id);
+				}
+			}
+		}
+		break;
+	}
+
+	case CS_ATTACK:
+		if (true == client->is_alive()) {
+			short x = client->m_x;
+			short y = client->m_y;
+			int level = client->m_level;
+
+			// Get Attacked Coords
+			std::vector<std::pair<short, short>> attacked_coords;
+
+			switch (level) {
+			case PAWN:
+				if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y - 1);
+				if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y - 1);
+				break;
+
+			case BISHOP:
+				if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y - 1);
+				if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y - 1);
+				if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y + 1);
+				if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y + 1);
+				break;
+
+			case ROOK:
+				if ((0 <= x) && (x < W_WIDTH) && (0 <= y - 1) && (y - 1 < W_HEIGHT)) attacked_coords.emplace_back(x, y - 1);
+				if ((0 <= x) && (x < W_WIDTH) && (0 <= y + 1) && (y + 1 < W_HEIGHT)) attacked_coords.emplace_back(x, y + 1);
+				if ((0 <= x - 1) && (x - 1 < W_WIDTH) && (0 <= y) && (y < W_HEIGHT)) attacked_coords.emplace_back(x - 1, y);
+				if ((0 <= x + 1) && (x + 1 < W_WIDTH) && (0 <= y) && (y < W_HEIGHT)) attacked_coords.emplace_back(x + 1, y);
+				break;
+
+			case KING:
+				for (int dy = -1; dy <= 1; ++dy) {
+					for (int dx = -1; dx <= 1; ++dx) {
+						if ((dx == 0) && (dy == 0)) { continue; }
+
+						int nx = x + dx;
+						int ny = y + dy;
+
+						if ((0 <= nx) && (nx < W_WIDTH) && (0 <= ny) && (ny < W_HEIGHT)) {
+							attacked_coords.emplace_back(nx, ny);
+						}
+					}
+				}
+				break;
+			}
+
+			// Emplace Attacked Sectors into Ordered Set in order to Avoid Deadlock
+			std::set<std::pair<short, short>> attacked_sectors;
+			for (const auto& coord : attacked_coords) {
+				attacked_sectors.emplace(coord.first / SECTOR_WIDTH, coord.second / SECTOR_HEIGHT);
+			}
+
+			// Sector Lock
+			std::vector<std::unique_lock<std::mutex>> sector_locks;
+			for (const auto& sector : attacked_sectors) {
+				sector_locks.emplace_back(g_mutex[sector.second][sector.first]);
+			}
+
+			// Damage Logic
+			for (const auto& sector : attacked_sectors) {
+				for (const auto& cl : g_sector[sector.second][sector.first]) {
+					std::shared_ptr<SESSION> npc = g_clients.at(cl);
+					if (nullptr == npc) continue;
+
+					if (false == is_npc(npc->m_id)) { continue; }
+					if (ST_INGAME != npc->m_state) { continue; }
+					if (npc->m_id == c_id) { continue; }
+
+					if (true == can_see(c_id, npc->m_id)) {
+						for (const auto& coord : attacked_coords) {
+							if ((coord.first == npc->m_x) && (coord.second == npc->m_y)) {
+								npc->receive_damage(1 + level, c_id);
+							}
 						}
 					}
 				}
 			}
-		}
 
-		// Send Attack Packet to Player
-		client->m_vl.lock();
-		std::unordered_set<int> vlist = client->m_view_list;
-		client->m_vl.unlock();
+			// Send Attack Packet to Player
+			client->m_vl.lock();
+			std::unordered_set<int> vlist = client->m_view_list;
+			client->m_vl.unlock();
 
-		for (auto& cl : vlist) {
-			std::shared_ptr<SESSION> other = g_clients.at(cl);
-			if (nullptr == other) continue;
+			for (auto& cl : vlist) {
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) continue;
 
-			if (false == is_player(other->m_id)) { continue; }
-			if (ST_INGAME != other->m_state) { continue; }
-			if (other->m_id == c_id) { continue; }
+				if (false == is_player(other->m_id)) { continue; }
+				if (ST_INGAME != other->m_state) { continue; }
+				if (other->m_id == c_id) { continue; }
 
-			if (true == can_see(c_id, other->m_id)) {
-				other->send_attack(c_id);
+				if (true == can_see(c_id, other->m_id)) {
+					other->send_attack(c_id);
+				}
 			}
 		}
 		break;
@@ -1014,26 +1102,59 @@ void update_sector(int c_id, short old_x, short old_y, short new_x, short new_y)
 
 void init_npc() {
 	std::cout << "NPC intialize begin" << std::endl;
-	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
-		if ((i % 10'000) == 0) {
-			std::cout << "NPC initializing : " << (i - MAX_USER) << " initialized" << std::endl;
-		}
 
-		// Session
-		std::shared_ptr<SESSION> p = std::make_shared<SESSION>(i);
+	std::ifstream in("npc_data.json");
+	if (!in.is_open()) {
+		std::cerr << "Failed to open npc_data.json" << std::endl;
+		return;
+	}
+
+	std::string line;
+	int npc_index = MAX_USER;
+
+	while (std::getline(in, line)) {
+		size_t pos = line.find("Npc ");
+		if (pos == std::string::npos) { continue; }
+
+		std::shared_ptr<SESSION> p = std::make_shared<SESSION>(npc_index);
 		p->m_state = ST_INGAME;
 
-		short x, y;
+		// Name
+		std::string id_str = line.substr(pos + 4);
+		id_str.erase(std::remove_if(id_str.begin(), id_str.end(), [](char c) { return !std::isdigit(c); }), id_str.end());
+		int name_id = std::stoi(id_str);
+		snprintf(p->m_name, sizeof(p->m_name), "Npc %d", name_id);
 
-		do {
-			x = rand() % W_WIDTH;
-			y = rand() % W_HEIGHT;
-		} while (true == get_tile(x, y));
+		// Level
+		if (!std::getline(in, line)) { break; }
+		auto level_pos = line.find(":");
 
-		p->m_x = x;
-		p->m_y = y;
-		p->m_level = (rand() % 2) + KNIGHT;
-		snprintf(p->m_name, sizeof(p->m_name), "Npc %d", i);
+		if (level_pos == std::string::npos) { continue; }
+		std::string level_str = line.substr(level_pos + 1);
+		level_str.erase(std::remove_if(level_str.begin(), level_str.end(), [](char c) { return !std::isdigit(c); }), level_str.end());
+
+		p->m_level = std::stoi(level_str);
+
+		// X
+		if (!std::getline(in, line)) { break; }
+		auto x_pos = line.find(":");
+
+		if (x_pos == std::string::npos) { continue; }
+		std::string x_str = line.substr(x_pos + 1);
+		x_str.erase(std::remove_if(x_str.begin(), x_str.end(), [](char c) { return !std::isdigit(c); }), x_str.end());
+
+		p->m_x = static_cast<short>(std::stoi(x_str));
+
+		// Y
+		if (!std::getline(in, line)) { break; }
+		auto y_pos = line.find(":");
+
+		if (y_pos == std::string::npos) { continue; }
+		std::string y_str = line.substr(y_pos + 1);
+		y_str.erase(std::remove_if(y_str.begin(), y_str.end(), [](char c) { return !std::isdigit(c); }), y_str.end());
+
+		p->m_y = static_cast<short>(std::stoi(y_str));
+
 
 		// Lua
 		p->m_lua = luaL_newstate();
@@ -1042,7 +1163,7 @@ void init_npc() {
 		lua_pcall(p->m_lua, 0, 0, 0);
 
 		lua_getglobal(p->m_lua, "init_npc");
-		lua_pushnumber(p->m_lua, i);
+		lua_pushnumber(p->m_lua, npc_index);
 		lua_pushnumber(p->m_lua, p->m_level);
 		lua_pcall(p->m_lua, 2, 0, 0);
 
@@ -1066,6 +1187,14 @@ void init_npc() {
 			std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
 			g_sector[sy][sx].insert(p->m_id);
 		}
+
+		++npc_index;
+
+		if ((npc_index % 10'000) == 0) {
+			std::cout << "NPC initializing : " << (npc_index - MAX_USER) << " initialized" << std::endl;
+		}
+
+		if (npc_index >= MAX_USER + MAX_NPC) { break; }
 	}
 	std::cout << "NPC initialize end" << std::endl;
 }

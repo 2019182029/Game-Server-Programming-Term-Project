@@ -10,7 +10,7 @@ constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 0;
+constexpr int MAX_NPC = 200'000;
 constexpr int INVALID_ID = -1;
 
 constexpr int PAWN = 0;
@@ -149,6 +149,7 @@ struct CS_CHAT_PACKET {
 struct CS_TELEPORT_PACKET {
 	unsigned char size;
 	char	type;
+	unsigned int move_time;
 };
 
 struct CS_ATTACK_PACKET {
