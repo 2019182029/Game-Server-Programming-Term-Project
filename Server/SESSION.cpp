@@ -226,10 +226,18 @@ void SESSION::send_level_up(int c_id) {
 	do_send(&p);
 }
 
-void SESSION::send_damaged(int hp) {
-	SC_DAMAGED_PACKET p;
-	p.size = sizeof(SC_DAMAGED_PACKET);
-	p.type = SC_DAMAGED;
+void SESSION::send_damage(int hp) {
+	SC_DAMAGE_PACKET p;
+	p.size = sizeof(SC_DAMAGE_PACKET);
+	p.type = SC_DAMAGE;
+	p.hp = hp;
+	do_send(&p);
+}
+
+void SESSION::send_heal(int hp) {
+	SC_HEAL_PACKET p;
+	p.size = sizeof(SC_HEAL_PACKET);
+	p.type = SC_HEAL;
 	p.hp = hp;
 	do_send(&p);
 }
@@ -295,7 +303,32 @@ void SESSION::receive_damage(int damage, int target_id) {
 		}
 	} else {
 		if (m_id < MAX_USER) {
-			send_damaged(curr_hp);
+			send_damage(curr_hp);
+		}
+
+		if (m_max_hp == prev_hp) {
+			timer_lock.lock();
+			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
+			timer_lock.unlock();
+		}
+	}
+}
+
+void SESSION::heal() {
+	while (true) {
+		int expected = m_hp;
+
+		if (m_max_hp <= expected) { break; }
+
+		if (std::atomic_compare_exchange_strong(&m_hp, &expected, expected + 1)) {
+			if (m_max_hp > expected + 1) {
+				timer_lock.lock();
+				timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
+				timer_lock.unlock();
+			}
+				
+			send_heal(expected + 1);
+			break;
 		}
 	}
 }

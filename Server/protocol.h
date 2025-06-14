@@ -10,7 +10,7 @@ constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 200'000;
+constexpr int MAX_NPC = 2000;
 constexpr int INVALID_ID = -1;
 
 constexpr int PAWN = 0;
@@ -71,8 +71,9 @@ constexpr char SC_STAT_CHANGE = 9;
 constexpr char SC_ATTACK = 10;
 constexpr char SC_EARN_EXP = 11;
 constexpr char SC_LEVEL_UP = 12;
-constexpr char SC_DAMAGED = 13;
+constexpr char SC_DAMAGE = 13;
 constexpr char SC_DEATH = 14;
+constexpr char SC_HEAL = 15;
 
 // Error Code
 constexpr char NO_ID = -1;  
@@ -231,7 +232,13 @@ struct SC_LEVEL_UP_PACKET {
 	int		level;
 };
 
-struct SC_DAMAGED_PACKET {
+struct SC_DAMAGE_PACKET {
+	unsigned char size;
+	char	type;
+	int		hp;
+};
+
+struct SC_HEAL_PACKET {
 	unsigned char size;
 	char	type;
 	int		hp;

@@ -1081,8 +1081,14 @@ void process_packet(char* packet) {
 		break;
 	}
 
-	case SC_DAMAGED: {
-		SC_DAMAGED_PACKET* p = reinterpret_cast<SC_DAMAGED_PACKET*>(packet);
+	case SC_DAMAGE: {
+		SC_DAMAGE_PACKET* p = reinterpret_cast<SC_DAMAGE_PACKET*>(packet);
+		player.m_hp = p->hp;
+		break;
+	}
+
+	case SC_HEAL: {
+		SC_HEAL_PACKET* p = reinterpret_cast<SC_HEAL_PACKET*>(packet);
 		player.m_hp = p->hp;
 		break;
 	}

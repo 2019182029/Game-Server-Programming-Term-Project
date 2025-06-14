@@ -230,6 +230,10 @@ void worker() {
 
 			client->send_login_info();
 
+			timer_lock.lock();
+			timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
+			timer_lock.unlock();
+
 			// Add Client into Sector
 			short sx = client->m_x / SECTOR_WIDTH;
 			short sy = client->m_y / SECTOR_HEIGHT;
@@ -290,6 +294,18 @@ void worker() {
 			if (nullptr == client) { break; }
 			
 			client->send_login_fail(eo->m_error_code);
+
+			delete eo;
+			break;
+		}
+
+		case IO_HEAL: {
+			int obj_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> obj = g_clients.at(obj_id);
+			if (nullptr == obj) { break; }
+
+			obj->heal();
 
 			delete eo;
 			break;
@@ -1334,6 +1350,13 @@ void do_timer() {
 			timer_lock.unlock();
 
 			switch (k.event_id) {
+			case EV_HEAL: {
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_HEAL;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+				break;
+			}
+
 			case EV_PLAYER_DIE: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_PLAYER_DIE;

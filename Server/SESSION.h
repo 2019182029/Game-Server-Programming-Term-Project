@@ -37,6 +37,7 @@ extern std::default_random_engine dre;
 extern std::uniform_int_distribution<int> uid;
 
 enum EVENT_TYPE { 
+	EV_HEAL,
 	EV_PLAYER_DIE, EV_PLAYER_RESPAWN,
 	EV_NPC_MOVE, EV_NPC_ATTACK, EV_NPC_DIE, EV_NPC_RESPAWN 
 };
@@ -94,6 +95,7 @@ extern std::mutex query_lock;
 enum IO_TYPE { 
 	IO_ACCEPT, IO_SEND, IO_RECV, 
 	IO_LOGIN, IO_LOGIN_OK, IO_LOGIN_FAIL,
+	IO_HEAL,
 	IO_PLAYER_DIE, IO_PLAYER_RESPAWN,
 	IO_NPC_MOVE, IO_NPC_ATTACK, IO_NPC_DIE, IO_NPC_RESPAWN 
 };
@@ -146,8 +148,8 @@ public:
 	lua_State* m_lua;
 	std::mutex m_lua_lock;
 
-	int m_account_id;
 	int m_avatar_id;
+	int m_account_id;
 
 public:
 	SESSION();
@@ -171,13 +173,15 @@ public:
 	bool earn_exp(int& exp);
 	void send_earn_exp(int exp);
 	void send_level_up(int c_id);
-	void send_damaged(int hp);
+	void send_damage(int hp);
+	void send_heal(int hp);
 	void send_death(int c_id);
 
 	void try_wake_up(int target_id);
 	void wake_up(int target_id);
 	void sleep();
 	void receive_damage(int damage, int target_id);
+	void heal();
 	bool is_alive();
 	void respawn(short x, short y);
 };
