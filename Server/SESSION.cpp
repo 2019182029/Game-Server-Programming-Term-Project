@@ -105,11 +105,11 @@ void SESSION::send_login_ok(const std::vector<AVATAR>& avatars) {
 	delete[] buffer;
 }
 
-void SESSION::send_login_fail() {
+void SESSION::send_login_fail(int error_code) {
 	SC_LOGIN_FAIL_PACKET p;
 	p.size = sizeof(SC_LOGIN_FAIL_PACKET);
 	p.type = SC_LOGIN_FAIL;
-	//p.error_code = ;
+	p.error_code = error_code;
 	do_send(&p);
 }
 

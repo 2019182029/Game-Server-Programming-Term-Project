@@ -104,6 +104,7 @@ public:
 
 	int m_target_id;
 
+	int error_code;
 	std::vector<AVATAR> m_avatars;
 
 public:
@@ -153,7 +154,7 @@ public:
 	void do_send(void* buff);
 
 	void send_login_ok(const std::vector<AVATAR>& avatars);
-	void send_login_fail();
+	void send_login_fail(int error_code);
 	void send_login_info();
 	void send_add_object(int c_id);
 	void send_move_object(int c_id);

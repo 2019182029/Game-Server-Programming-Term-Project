@@ -924,7 +924,25 @@ void process_packet(char* packet) {
 	}
 
 	case SC_LOGIN_FAIL: {
-		MessageBox(g_hWnd, L"Login Failed", L"Error", MB_OK | MB_ICONERROR);
+		SC_LOGIN_FAIL_PACKET* p = reinterpret_cast<SC_LOGIN_FAIL_PACKET*>(packet);
+
+		switch (p->error_code) {
+		case NO_ID:
+			MessageBox(g_hWnd, L"ID does not exist", L"Error", MB_OK | MB_ICONERROR);
+			break;
+
+		case WRONG_PW:
+			MessageBox(g_hWnd, L"Password is incorrect", L"Error", MB_OK | MB_ICONERROR);
+			break;
+
+		case DUPLICATED:
+			MessageBox(g_hWnd, L"Account is already logged in", L"Error", MB_OK | MB_ICONERROR);
+			break;
+
+		case EXEC_DIRECT:
+			MessageBox(g_hWnd, L"Failed to load user data", L"Error", MB_OK | MB_ICONERROR);
+			break;
+		}
 		break;
 	}
 

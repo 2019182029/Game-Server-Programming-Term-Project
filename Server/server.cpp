@@ -65,6 +65,9 @@ void do_timer();
 void do_query();
 void HandleDiagnosticRecord(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode);
 
+std::unordered_set<int> g_ids;
+std::mutex g_id_lock;
+
 //////////////////////////////////////////////////
 // TERRAIN
 std::vector<uint8_t> terrain((W_WIDTH* W_HEIGHT + 7) / 8, 0);
@@ -282,7 +285,7 @@ void worker() {
 			std::shared_ptr<SESSION> client = g_clients.at(client_id);
 			if (nullptr == client) { break; }
 			
-			client->send_login_fail();
+			client->send_login_fail(eo->error_code);
 
 			delete eo;
 			break;
@@ -653,7 +656,12 @@ void disconnect(int c_id) {
 		std::lock_guard<std::mutex> lock(g_mutex[sy][sx]);
 		g_sector[sy][sx].erase(c_id);
 	}
-	
+
+	if (client->m_account_id) {
+		std::lock_guard<std::mutex> lock(g_id_lock);
+		g_ids.erase(std::stoi(client->m_name));
+	}
+
 	g_clients.at(c_id) = nullptr;
 }
 
@@ -664,6 +672,15 @@ void process_packet(int c_id, char* packet) {
 	switch (packet[1]) {
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
+
+		{
+			std::lock_guard<std::mutex> lock(g_id_lock);
+
+			if (g_ids.count(std::stoi(p->id))) {
+				disconnect(c_id);
+				break;
+			}
+		}
 
 		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_LOGIN };
 		strncpy(q.client_id, p->id, ID_SIZE);
@@ -677,6 +694,15 @@ void process_packet(int c_id, char* packet) {
 
 	case CS_USER_LOGIN: {
 		CS_USER_LOGIN_PACKET* p = reinterpret_cast<CS_USER_LOGIN_PACKET*>(packet);
+
+		{
+			std::lock_guard<std::mutex> lock(g_id_lock);
+
+			if (g_ids.count(std::stoi(p->id))) {
+				client->send_login_fail(DUPLICATED);
+				break;
+			}
+		}
 
 		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_USER_LOGIN };
 		strncpy(q.client_id, p->id, ID_SIZE);
@@ -1299,18 +1325,23 @@ void do_query() {
 				SQLGetData(hstmt, 6, SQL_C_SLONG, &x, 0, NULL);
 				SQLGetData(hstmt, 7, SQL_C_SLONG, &y, 0, NULL);
 
-				if (-1 == avatar_id) {
+				if ((-1 == avatar_id) || (-2 == avatar_id)) {
 					SQLCloseCursor(hstmt);
 					disconnect(q.obj_id);
 				}
 
+				{
+					std::lock_guard<std::mutex> lock(g_id_lock);
+					g_ids.insert(std::stoi(q.client_id));
+				}
+
+				client->m_state = ST_INGAME;
 				client->m_x = x;
 				client->m_y = y;
 				client->m_exp = exp;
 				client->m_level = level;
 				strncpy(client->m_name, q.client_id, ID_SIZE);
 				client->m_avatar_id = avatar_id;
-				client->m_state = ST_INGAME;
 
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_LOGIN;
@@ -1340,47 +1371,39 @@ void do_query() {
 
 					EXP_OVER* o = new EXP_OVER;
 					o->m_io_type = IO_LOGIN_FAIL;
+					o->error_code = EXEC_DIRECT;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
 
 				// Fetch
-				bool valid = true;
 				std::vector<AVATAR> avatars;
 				int account_id, avatar_id, slot, level;
 
-				while (SQL_SUCCESS == SQLFetch(hstmt)) {
+				while (SQLFetch(hstmt) == SQL_SUCCESS) {
 					SQLGetData(hstmt, 1, SQL_C_SLONG, &account_id, 0, NULL);
 					SQLGetData(hstmt, 2, SQL_C_SLONG, &avatar_id, 0, NULL);
 					SQLGetData(hstmt, 3, SQL_C_SLONG, &slot, 0, NULL);
 					SQLGetData(hstmt, 4, SQL_C_SLONG, &level, 0, NULL);
 
-					if (-1 == account_id) {
+					if ((-1 == account_id) || (-2 == account_id)) {
 						SQLCloseCursor(hstmt);
-						valid = false;
-						break;
+
+						EXP_OVER* o = new EXP_OVER;
+						o->m_io_type = IO_LOGIN_FAIL;
+						o->error_code = (-1 == account_id) ? NO_ID : WRONG_PW;
+						PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+						goto query_pop;
 					}
 
 					avatars.emplace_back(AVATAR{ avatar_id, slot, level });
 				}
 
-				if (false == valid) {
-					SQLCloseCursor(hstmt);
-
-					EXP_OVER* o = new EXP_OVER;
-					o->m_io_type = IO_LOGIN_FAIL;
-					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
-					break;
-				}
-
 				// Send
-				if (avatars.empty()) {
-					SQLCloseCursor(hstmt);
-
-					EXP_OVER* o = new EXP_OVER;
-					o->m_io_type = IO_LOGIN_FAIL;
-					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
-					break;
+				{
+					std::lock_guard<std::mutex> lock(g_id_lock);
+					g_ids.insert(std::stoi(q.client_id));
 				}
 
 				strncpy(client->m_name, q.client_id, ID_SIZE);
@@ -1412,6 +1435,7 @@ void do_query() {
 
 					EXP_OVER* o = new EXP_OVER;
 					o->m_io_type = IO_LOGIN_FAIL;
+					o->error_code = EXEC_DIRECT;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1460,6 +1484,7 @@ void do_query() {
 
 					EXP_OVER* o = new EXP_OVER;
 					o->m_io_type = IO_LOGIN_FAIL;
+					o->error_code = EXEC_DIRECT;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1493,6 +1518,7 @@ void do_query() {
 			}
 			}
 
+query_pop:
 			query_lock.lock();
 			query_queue.pop();
 			query_lock.unlock();

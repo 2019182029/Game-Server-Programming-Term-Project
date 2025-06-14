@@ -73,6 +73,12 @@ constexpr char SC_LEVEL_UP = 12;
 constexpr char SC_DAMAGED = 13;
 constexpr char SC_DEATH = 14;
 
+// Error Code
+constexpr char NO_ID = -1;  
+constexpr char WRONG_PW = -2;  
+constexpr char DUPLICATED = -3;  
+constexpr char EXEC_DIRECT = -4;
+
 #pragma pack (push, 1)
 
 struct AVATAR {
