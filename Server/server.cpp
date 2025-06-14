@@ -132,6 +132,8 @@ int main() {
 	std::thread timer_thread(do_timer);
 	std::thread query_thread(do_query);
 
+	setlocale(LC_ALL, "korean");
+
 	for (auto& w : workers)
 		w.join();
 	timer_thread.join();
@@ -690,7 +692,7 @@ void process_packet(int c_id, char* packet) {
 		CS_SELECT_AVATAR_PACKET* p = reinterpret_cast<CS_SELECT_AVATAR_PACKET*>(packet);
 
 		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_SELECT_AVATAR };
-		q.avatar_id = p->avatar_id;
+		q.set_avatar_id(p->avatar_id);
 
 		query_lock.lock();
 		query_queue.emplace(q);
@@ -699,9 +701,10 @@ void process_packet(int c_id, char* packet) {
 	}
 
 	case CS_CREATE_AVATAR: {
-		CS_SELECT_AVATAR_PACKET* p = reinterpret_cast<CS_SELECT_AVATAR_PACKET*>(packet);
+		CS_CREATE_AVATAR_PACKET* p = reinterpret_cast<CS_CREATE_AVATAR_PACKET*>(packet);
 
 		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_CREATE_AVATAR };
+		q.set_slot(p->slot_id);
 
 		query_lock.lock();
 		query_queue.emplace(q);
@@ -1396,6 +1399,7 @@ void do_query() {
 				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
 				if (nullptr == client) { break; }
 
+				// ExecDirect
 				wchar_t query_buf[128];
 				swprintf_s(query_buf, 256, L"EXEC sp_select_avatar %d, %d", q.avatar_id, client->m_account_id);
 				
@@ -1423,6 +1427,7 @@ void do_query() {
 				SQLGetData(hstmt, 4, SQL_C_SLONG, &x, 0, NULL);
 				SQLGetData(hstmt, 5, SQL_C_SLONG, &y, 0, NULL);
 
+				// Send
 				client->m_x = x;
 				client->m_y = y;
 				client->m_exp = exp;
@@ -1437,7 +1442,53 @@ void do_query() {
 				SQLCloseCursor(hstmt);
 				break;
 			}
+
 			case QU_CREATE_AVATAR: {
+				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
+				if (nullptr == client) { break; }
+
+				// ExecDirect
+				wchar_t query_buf[128];
+				swprintf_s(query_buf, 128, L"EXEC sp_create_avatar %d, %d", client->m_account_id, q.slot);
+
+				std::wstring query = query_buf;
+
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query.c_str(), SQL_NTS);
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
+					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				// Fetch 
+				SQLFetch(hstmt);
+
+				int avatar_id, exp, level, hp, x, y;
+				SQLGetData(hstmt, 1, SQL_C_SLONG, &avatar_id, 0, NULL);
+				SQLGetData(hstmt, 2, SQL_C_SLONG, &exp, 0, NULL);
+				SQLGetData(hstmt, 3, SQL_C_SLONG, &level, 0, NULL);
+				SQLGetData(hstmt, 4, SQL_C_SLONG, &hp, 0, NULL);
+				SQLGetData(hstmt, 5, SQL_C_SLONG, &x, 0, NULL);
+				SQLGetData(hstmt, 6, SQL_C_SLONG, &y, 0, NULL);
+
+				// Send
+				client->m_avatar_id = avatar_id;
+				client->m_exp = exp;
+				client->m_level = level;
+				client->m_hp = hp;
+				client->m_x = x;
+				client->m_y = y;
+				client->m_state = ST_INGAME;
+
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_LOGIN;
+				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+				SQLCloseCursor(hstmt);
 				break;
 			}
 			}

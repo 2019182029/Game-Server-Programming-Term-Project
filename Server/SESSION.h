@@ -22,6 +22,7 @@
 #include "include/lua.hpp"
 
 #include <sqlext.h>
+#include <locale.h>
 
 #pragma comment (lib, "WS2_32.LIB")
 #pragma comment (lib, "MSWSock.LIB")
@@ -60,9 +61,11 @@ struct query {
 	std::chrono::high_resolution_clock::time_point wakeup_time;
 	QUERY_TYPE query_id;
 
-	int avatar_id;
 	char client_id[ID_SIZE];
 	char client_pw[PW_SIZE];
+
+	int avatar_id;
+	int slot;
 
 	query(int o_id, std::chrono::high_resolution_clock::time_point w_time, QUERY_TYPE q_id) {
 		obj_id = o_id;
@@ -73,6 +76,9 @@ struct query {
 	constexpr bool operator < (const query& _Left) const {
 		return (wakeup_time > _Left.wakeup_time);
 	}
+
+	void set_avatar_id(int a_id) { avatar_id = a_id; }
+	void set_slot(int s) { slot = s; }
 };
 
 extern std::priority_queue<query> query_queue;

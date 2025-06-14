@@ -108,6 +108,7 @@ struct CS_SELECT_AVATAR_PACKET {
 struct CS_CREATE_AVATAR_PACKET {
 	unsigned char size;
 	char	type;
+	int		slot_id;
 };
 
 struct CS_USER_LOGIN_PACKET {

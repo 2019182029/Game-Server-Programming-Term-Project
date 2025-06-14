@@ -531,6 +531,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				CS_CREATE_AVATAR_PACKET p;
 				p.size = sizeof(CS_CREATE_AVATAR_PACKET);
 				p.type = CS_CREATE_AVATAR;
+				p.slot_id = id - 3000;
 				do_send(&p);
 			}
 			break;
