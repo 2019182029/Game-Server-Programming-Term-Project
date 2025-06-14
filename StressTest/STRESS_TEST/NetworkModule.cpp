@@ -49,6 +49,7 @@ struct CLIENT {
 	int x;
 	int y;
 	atomic_bool connected;
+	atomic_bool alive;
 
 	SOCKET client_socket;
 	OverlappedEx recv_over;
@@ -137,6 +138,7 @@ void ProcessPacket(int ci, unsigned char packet[])
 		g_clients[my_id].id = login_packet->id;
 		g_clients[my_id].x = login_packet->x;
 		g_clients[my_id].y = login_packet->y;
+		g_clients[my_id].alive = true;
 
 		CS_TELEPORT_PACKET p;
 		p.size = sizeof(CS_TELEPORT_PACKET);
@@ -153,6 +155,9 @@ void ProcessPacket(int ci, unsigned char packet[])
 			if (-1 != my_id) {
 				g_clients[my_id].x = move_packet->x;
 				g_clients[my_id].y = move_packet->y;
+				if (false == g_clients[my_id].alive) {
+					g_clients[my_id].alive = true;
+				}
 			}
 			if (ci == my_id) {
 				if (0 != move_packet->move_time) {
@@ -161,6 +166,17 @@ void ProcessPacket(int ci, unsigned char packet[])
 					if (global_delay < d_ms) global_delay++;
 					else if (global_delay > d_ms) global_delay--;
 				}
+			}
+		}
+		break;
+	}
+
+	case SC_DEATH: {
+		SC_DEATH_PACKET* move_packet = reinterpret_cast<SC_DEATH_PACKET*>(packet);
+		if (move_packet->id < MAX_CLIENTS) {
+			int my_id = client_map[move_packet->id];
+			if (-1 != my_id) {
+				g_clients[my_id].alive = false;
 			}
 		}
 		break;
@@ -350,19 +366,35 @@ void Test_Thread()
 
 		for (int i = 0; i < num_connections; ++i) {
 			if (false == g_clients[i].connected) continue;
+			if (false == g_clients[i].alive) continue;
 			if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
 			g_clients[i].last_move_time = high_resolution_clock::now();
-			CS_MOVE_PACKET my_packet;
-			my_packet.size = sizeof(my_packet);
-			my_packet.type = CS_MOVE;
-			switch (rand() % 4) {
-			case 0: my_packet.direction = 0; break;
-			case 1: my_packet.direction = 1; break;
-			case 2: my_packet.direction = 2; break;
-			case 3: my_packet.direction = 3; break;
+			switch (rand() % 2) {
+			case 0: {
+				// Move
+				CS_MOVE_PACKET my_packet;
+				my_packet.size = sizeof(my_packet);
+				my_packet.type = CS_MOVE;
+				switch (rand() % 4) {
+				case 0: my_packet.direction = 0; break;
+				case 1: my_packet.direction = 1; break;
+				case 2: my_packet.direction = 2; break;
+				case 3: my_packet.direction = 3; break;
+				}
+				my_packet.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
+				SendPacket(i, &my_packet);
+				break;
 			}
-			my_packet.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
-			SendPacket(i, &my_packet);
+
+			case 1: {
+				// Attack
+				CS_ATTACK_PACKET my_packet;
+				my_packet.size = sizeof(my_packet);
+				my_packet.type = CS_ATTACK;
+				SendPacket(i, &my_packet);
+				break;
+			}
+			}
 		}
 	}
 }
