@@ -666,7 +666,9 @@ void disconnect(int c_id) {
 		g_ids.erase(std::stoi(client->m_name));
 	}
 
-	g_clients.at(c_id) = nullptr;
+	query_lock.lock();
+	query_queue.emplace(query{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_LOGOUT });
+	query_lock.unlock();
 }
 
 void process_packet(int c_id, char* packet) {
@@ -1527,6 +1529,30 @@ void do_query() {
 				o->m_io_type = IO_LOGIN_OK;
 				o->m_avatars = std::move(avatars);
 				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+				SQLCloseCursor(hstmt);
+				break;
+			}
+
+			case QU_LOGOUT: {
+				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
+				if (nullptr == client) { break; }
+
+				// ExecDirect
+				wchar_t query_buf[256];
+				swprintf_s(query_buf, 256, L"EXEC sp_save_avatar_on_disconnect %d, %d, %d, %d, %d, %d",
+					client->m_avatar_id,
+					static_cast<int>(client->m_exp), client->m_level,
+					static_cast<int>(client->m_hp),
+					client->m_x, client->m_y
+				);
+
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query_buf, SQL_NTS);
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
+					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+				}
+
+				g_clients.at(q.obj_id) = nullptr;
 
 				SQLCloseCursor(hstmt);
 				break;
