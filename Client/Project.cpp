@@ -177,6 +177,23 @@ public:
 
 		DrawTextA(hDC, m_name, -1, &nameRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
+		// HP
+		int bar_width = S_TILE_WIDTH - 2;
+		int bar_height = 3;     
+		int draw_x = x * S_TILE_WIDTH + (S_TILE_WIDTH - bar_width) / 2;
+		int draw_y = (y + 1) * S_TILE_HEIGHT - bar_height - 1;
+
+		HBRUSH bg_brush = CreateSolidBrush(RGB(80, 80, 80));
+		RECT bg_rect = { draw_x, draw_y, draw_x + bar_width, draw_y + bar_height };
+		FillRect(hDC, &bg_rect, bg_brush);
+		DeleteObject(bg_brush);
+
+		int hp_bar_width = (int)((m_hp / (float)m_max_hp) * bar_width);
+		HBRUSH hp_brush = CreateSolidBrush(RGB(255, 0, 0));
+		RECT hp_rect = { draw_x, draw_y, draw_x + hp_bar_width, draw_y + bar_height };
+		FillRect(hDC, &hp_rect, hp_brush);
+		DeleteObject(hp_brush);
+
 		SelectObject(mDC, hBitmap);
 		DeleteDC(mDC);
 	}
@@ -504,10 +521,6 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			strncpy_s(p.id, id_buffer, ID_SIZE - 1);
 			strncpy_s(p.pw, pw_buffer, PW_SIZE - 1);
 			do_send(&p);
-
-			DWORD recv_bytes;
-			DWORD recv_flag = 0;
-			auto ret = WSARecv(g_socket, g_recv_over.m_wsabuf, 1, &recv_bytes, &recv_flag, &g_recv_over.m_over, recv_callback);
 			break;
 		}
 
@@ -526,10 +539,6 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			strncpy_s(p.id, id_buffer, ID_SIZE - 1);
 			strncpy_s(p.pw, pw_buffer, PW_SIZE - 1);
 			do_send(&p);
-
-			DWORD recv_bytes;
-			DWORD recv_flag = 0;
-			auto ret = WSARecv(g_socket, g_recv_over.m_wsabuf, 1, &recv_bytes, &recv_flag, &g_recv_over.m_over, recv_callback);
 			break;
 		}
 
@@ -916,8 +925,14 @@ bool try_connect_to_server(TCHAR* buffer) {
 
 	auto ret = WSAConnect(g_socket, reinterpret_cast<const sockaddr*>(&addr), sizeof(SOCKADDR_IN), NULL, NULL, NULL, NULL);
 
-	if (SOCKET_ERROR == ret) { return false; }
-	else { return true; }
+	if (SOCKET_ERROR == ret) { 
+		return false; 
+	} else { 
+		DWORD recv_bytes;
+		DWORD recv_flag = 0;
+		ret = WSARecv(g_socket, g_recv_over.m_wsabuf, 1, &recv_bytes, &recv_flag, &g_recv_over.m_over, recv_callback);
+		return true; 
+	}
 }
 
 void do_send(void* buff) {
@@ -1002,6 +1017,7 @@ void process_packet(char* packet) {
 		other.m_id = p->id;
 		other.m_x = p->x;
 		other.m_y = p->y;
+		other.m_hp = p->hp;
 		other.m_level = p->level;
 		strcpy(other.m_name, p->name);
 		others.emplace(other.m_id, other);
@@ -1063,7 +1079,14 @@ void process_packet(char* packet) {
 
 	case SC_EARN_EXP: {
 		SC_EARN_EXP_PACKET* p = reinterpret_cast<SC_EARN_EXP_PACKET*>(packet);
-		player.m_exp = p->exp;
+		player.m_exp += p->exp;
+
+		char buf[128];
+		sprintf_s(buf, "Defeated Npc %d and Gained %d Exps!", p->name, p->exp);
+		chat_log.emplace_back(buf);
+		if (chat_log.size() > MAX_CHAT_LINE) {
+			chat_log.erase(chat_log.begin());
+		}
 		break;
 	}
 
@@ -1083,13 +1106,29 @@ void process_packet(char* packet) {
 
 	case SC_DAMAGE: {
 		SC_DAMAGE_PACKET* p = reinterpret_cast<SC_DAMAGE_PACKET*>(packet);
-		player.m_hp = p->hp;
+
+		if (player.m_id == p->id) {
+			player.m_hp = p->hp;
+			break;
+		}
+
+		if (others.count(p->id)) {
+			others.at(p->id).m_hp = p->hp;
+		}
 		break;
 	}
 
 	case SC_HEAL: {
 		SC_HEAL_PACKET* p = reinterpret_cast<SC_HEAL_PACKET*>(packet);
-		player.m_hp = p->hp;
+
+		if (player.m_id == p->id) {
+			player.m_hp = p->hp;
+			break;
+		}
+
+		if (others.count(p->id)) {
+			others.at(p->id).m_hp = p->hp;
+		}
 		break;
 	}
 

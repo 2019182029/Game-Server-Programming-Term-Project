@@ -10,7 +10,7 @@ constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 5000;
+constexpr int MAX_NPC = 50000;
 constexpr int INVALID_ID = -1;
 
 constexpr int PAWN = 0;
@@ -178,6 +178,7 @@ struct SC_ADD_OBJECT_PACKET {
 	unsigned char size;
 	char	type;
 	int		id;
+	int		hp;
 	int		level;
 	short	x, y;
 	char	name[NAME_SIZE];
@@ -222,6 +223,7 @@ struct SC_EARN_EXP_PACKET {
 	unsigned char size;
 	char	type;
 	int		exp;
+	char	name[NAME_SIZE];
 };
 
 struct SC_LEVEL_UP_PACKET {
@@ -234,12 +236,14 @@ struct SC_LEVEL_UP_PACKET {
 struct SC_DAMAGE_PACKET {
 	unsigned char size;
 	char	type;
+	int		id;
 	int		hp;
 };
 
 struct SC_HEAL_PACKET {
 	unsigned char size;
 	char	type;
+	int		id;
 	int		hp;
 };
 

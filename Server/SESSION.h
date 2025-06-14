@@ -37,7 +37,7 @@ extern std::default_random_engine dre;
 extern std::uniform_int_distribution<int> uid;
 
 enum EVENT_TYPE { 
-	EV_HEAL,
+	EV_DAMAGE, EV_HEAL,
 	EV_PLAYER_DIE, EV_PLAYER_RESPAWN,
 	EV_NPC_MOVE, EV_NPC_ATTACK, EV_NPC_DIE, EV_NPC_RESPAWN 
 };
@@ -95,7 +95,7 @@ extern std::mutex query_lock;
 enum IO_TYPE { 
 	IO_ACCEPT, IO_SEND, IO_RECV, 
 	IO_LOGIN, IO_LOGIN_OK, IO_LOGIN_FAIL,
-	IO_HEAL,
+	IO_DAMAGE, IO_HEAL,
 	IO_PLAYER_DIE, IO_PLAYER_RESPAWN,
 	IO_NPC_MOVE, IO_NPC_ATTACK, IO_NPC_DIE, IO_NPC_RESPAWN 
 };
@@ -170,19 +170,19 @@ public:
 
 	void send_attack(int c_id);
 
-	bool earn_exp(int& exp);
-	void send_earn_exp(int exp);
+	bool earn_exp(int& prev_exp, int& curr_exp);
+	void send_earn_exp(const char* name, int exp);
 	void send_level_up(int c_id);
-	void send_damage(int hp);
-	void send_heal(int hp);
+	void send_damage(int c_id, int hp);
+	void send_heal(int c_id, int hp);
 	void send_death(int c_id);
 	void send_stat_change();
 
 	void try_wake_up(int target_id);
 	void wake_up(int target_id);
 	void sleep();
-	void receive_damage(int damage, int target_id);
-	void heal();
+	void receive_damage(int damage, int target_id, int& hp);
+	bool heal(int& hp);
 	bool is_alive();
 	void respawn(short x, short y);
 };

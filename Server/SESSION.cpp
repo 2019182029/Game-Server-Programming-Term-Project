@@ -137,6 +137,7 @@ void SESSION::send_add_object(int c_id) {
 	p.id = c_id;
 	p.x = client->m_x;
 	p.y = client->m_y;
+	p.hp = client->m_hp;
 	p.level = client->m_level;
 	strcpy(p.name, client->m_name);
 	m_vl.lock();
@@ -193,11 +194,11 @@ void SESSION::send_attack(int c_id) {
 	do_send(&p);
 }
 
-bool SESSION::earn_exp(int& exp) {
-	int prev_exp = m_exp.fetch_add(50);
-	exp = prev_exp + 50;
+bool SESSION::earn_exp(int& prev_exp, int& curr_exp) {
+	prev_exp = m_exp.fetch_add(50);
+	curr_exp = prev_exp + 50;
 
-	if (0 == (exp % 100)) {
+	if (0 == (curr_exp % 100)) {
 		if (m_level < KING) {
 			++m_level;
 			return true;
@@ -206,11 +207,12 @@ bool SESSION::earn_exp(int& exp) {
 	return false;
 }
 
-void SESSION::send_earn_exp(int exp) {
+void SESSION::send_earn_exp(const char* name, int exp) {
 	SC_EARN_EXP_PACKET p;
 	p.size = sizeof(SC_EARN_EXP_PACKET);
 	p.type = SC_EARN_EXP;
 	p.exp = exp;
+	strncpy(p.name, name, NAME_SIZE);
 	do_send(&p);
 }
 
@@ -226,18 +228,23 @@ void SESSION::send_level_up(int c_id) {
 	do_send(&p);
 }
 
-void SESSION::send_damage(int hp) {
+void SESSION::send_damage(int c_id, int hp) {
 	SC_DAMAGE_PACKET p;
 	p.size = sizeof(SC_DAMAGE_PACKET);
 	p.type = SC_DAMAGE;
+	p.id = c_id;
 	p.hp = hp;
 	do_send(&p);
 }
 
-void SESSION::send_heal(int hp) {
+void SESSION::send_heal(int c_id, int hp) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
 	SC_HEAL_PACKET p;
 	p.size = sizeof(SC_HEAL_PACKET);
 	p.type = SC_HEAL;
+	p.id = c_id;
 	p.hp = hp;
 	do_send(&p);
 }
@@ -297,35 +304,26 @@ void SESSION::sleep() {
 	m_is_active = false;
 }
 
-void SESSION::receive_damage(int damage, int target_id) {
+void SESSION::receive_damage(int damage, int target_id, int& hp) {
 	int prev_hp = m_hp.fetch_sub(damage);
-	int curr_hp = prev_hp - damage;
+	hp = prev_hp - damage;
 
-	if ((0 < prev_hp) && (0 >= curr_hp)) { 
-		if (m_id < MAX_USER) {
-			timer_lock.lock();
-			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_PLAYER_DIE });
-			timer_lock.unlock();
-		} else {
-			timer_lock.lock();
-			timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_NPC_DIE });
-			timer_lock.unlock();
-		}
-	} else {
-		if (m_id < MAX_USER) {
-			send_damage(curr_hp);
-		}
+	// Death Event
+	if ((0 < prev_hp) && (0 >= hp)) {
+		std::lock_guard<std::mutex> tl(timer_lock);
+		timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), (m_id < MAX_USER) ? EV_PLAYER_DIE : EV_NPC_DIE });
+		return;
+	} 
 
-		if (m_max_hp == prev_hp) {
-			timer_lock.lock();
-			timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
-			timer_lock.unlock();
-		}
+	// Heal Event
+	if (m_max_hp == prev_hp) {
+		std::lock_guard<std::mutex> tl(timer_lock);
+		timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
 	}
 }
 
-void SESSION::heal() {
-	if (false == is_alive()) { return; }
+bool SESSION::heal(int& hp) {
+	if (false == is_alive()) { return false; }
 
 	while (true) {
 		int expected = m_hp;
@@ -333,16 +331,19 @@ void SESSION::heal() {
 		if (m_max_hp <= expected) { break; }
 
 		if (std::atomic_compare_exchange_strong(&m_hp, &expected, expected + 1)) {
+			hp = expected + 1;
+
 			if (m_max_hp > expected + 1) {
 				timer_lock.lock();
 				timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
 				timer_lock.unlock();
 			}
 				
-			send_heal(expected + 1);
-			break;
+			return true;
 		}
 	}
+
+	return false;
 }
 
 bool SESSION::is_alive() {
@@ -355,6 +356,4 @@ void SESSION::respawn(short x, short y) {
 	m_hp = m_max_hp;
 	m_exp = 0;
 	m_level = max(0, m_level - 1);
-
-	send_stat_change();
 }

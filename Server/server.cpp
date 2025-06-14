@@ -239,6 +239,7 @@ void worker() {
 			// Add Client into Sector
 			short sx = client->m_x / SECTOR_WIDTH;
 			short sy = client->m_y / SECTOR_HEIGHT;
+
 			{
 				std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
 				g_sector[sy][sx].insert(client_id);
@@ -301,13 +302,136 @@ void worker() {
 			break;
 		}
 
+		case IO_DAMAGE: {
+			int obj_id = static_cast<int>(key);
+			int target_id = static_cast<int>(eo->m_target_id);
+
+			std::shared_ptr<SESSION> obj = g_clients.at(obj_id);
+			std::shared_ptr<SESSION> target = g_clients.at(target_id);
+
+			if ((nullptr == obj) || (nullptr == target)) { 
+				break; 
+			}
+
+			int hp;
+
+			obj->receive_damage(target->m_level + 1, target_id, hp);
+
+			// Create View List by Sector
+			std::unordered_set<int> near_list;
+
+			if (is_player(obj_id)) {
+				obj->m_vl.lock();
+				near_list = obj->m_view_list;
+				obj->m_vl.unlock();
+			} else {
+				int sx = obj->m_x / SECTOR_WIDTH;
+				int sy = obj->m_y / SECTOR_HEIGHT;
+
+				for (int dy = -1; dy <= 1; ++dy) {
+					for (int dx = -1; dx <= 1; ++dx) {
+						short nx = sx + dx;
+						short ny = sy + dy;
+
+						if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+						for (auto cl : g_sector[ny][nx]) {
+							if (false == is_player(cl)) { continue; }
+
+							std::shared_ptr<SESSION> other = g_clients.at(cl);
+							if (nullptr == other) { continue; }
+
+							if (ST_INGAME != other->m_state) { continue; }
+							if (other->m_id == obj->m_id) { continue; }
+
+							if (can_see(obj->m_id, other->m_id)) {
+								near_list.insert(other->m_id);
+							}
+						}
+					}
+				}
+			}
+
+			obj->send_damage(obj_id, hp);
+
+			for (auto& cl : near_list) {
+				if (false == is_player(cl)) { continue; }
+
+				std::shared_ptr<SESSION> other = g_clients.at(cl);
+				if (nullptr == other) { continue; }
+
+				if (ST_INGAME != other->m_state) { continue; }
+				if (other->m_id == obj_id) { continue; }
+
+				if (true == can_see(obj_id, other->m_id)) {
+					other->send_damage(obj_id, hp);
+				}
+			}
+
+			delete eo;
+			break;
+		}
+
 		case IO_HEAL: {
 			int obj_id = static_cast<int>(key);
 
 			std::shared_ptr<SESSION> obj = g_clients.at(obj_id);
 			if (nullptr == obj) { break; }
 
-			obj->heal();
+			int hp;
+
+			if (obj->heal(hp)) {
+				std::unordered_set<int> near_list;
+
+				if (is_player(obj_id)) {
+					obj->m_vl.lock();
+					near_list = obj->m_view_list;
+					obj->m_vl.unlock();
+				} else {
+					int sx = obj->m_x / SECTOR_WIDTH;
+					int sy = obj->m_y / SECTOR_HEIGHT;
+
+					// Create View List by Sector
+					for (int dy = -1; dy <= 1; ++dy) {
+						for (int dx = -1; dx <= 1; ++dx) {
+							short nx = sx + dx;
+							short ny = sy + dy;
+
+							if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+							for (auto cl : g_sector[ny][nx]) {
+								if (false == is_player(cl)) { continue; }
+
+								std::shared_ptr<SESSION> other = g_clients.at(cl);
+								if (nullptr == other) { continue; }
+
+								if (ST_INGAME != other->m_state) { continue; }
+								if (other->m_id == obj->m_id) { continue; }
+
+								if (can_see(obj->m_id, other->m_id)) {
+									near_list.insert(other->m_id);
+								}
+							}
+						}
+					}
+				}
+
+				obj->send_heal(obj_id, hp);
+
+				for (auto& cl : near_list) {
+					if (false == is_player(cl)) { continue; }
+
+					std::shared_ptr<SESSION> other = g_clients.at(cl);
+					if (nullptr == other) { continue; }
+
+					if (ST_INGAME != other->m_state) { continue; }
+					if (other->m_id == obj_id) { continue; }
+
+					if (true == can_see(obj_id, other->m_id)) {
+						other->send_heal(obj_id, hp);
+					}
+				}
+			}
 
 			delete eo;
 			break;
@@ -365,6 +489,7 @@ void worker() {
 			} while (true == get_tile(new_x, new_y));
 
 			client->respawn(new_x, new_y);
+			client->send_stat_change();
 
 			// Update Sector
 			update_sector(client_id, old_x, old_y, new_x, new_y);
@@ -558,11 +683,11 @@ void worker() {
 			std::shared_ptr<SESSION> client = g_clients.at(client_id);
 			if (nullptr == client) break;
 
-			int exp = 0;
-			bool level_up = client->earn_exp(exp);
+			int prev_exp, curr_exp;
+			bool level_up = client->earn_exp(prev_exp, curr_exp);
 
 			// Send Earn Exp Packet to Player
-			client->send_earn_exp(exp);
+			client->send_earn_exp(npc->m_name, (curr_exp - prev_exp));
 
 			if (level_up) {
 				// Send Level Up Packet to Player
@@ -576,7 +701,7 @@ void worker() {
 					if (false == is_player(cl)) { continue; }
 
 					std::shared_ptr<SESSION> other = g_clients.at(cl);
-					if (nullptr == other) continue;
+					if (nullptr == other) { continue; }
 
 					if (ST_INGAME != other->m_state) { continue; }
 					if (other->m_id == client_id) { continue; }
@@ -1062,7 +1187,8 @@ void process_packet(int c_id, char* packet) {
 					if (true == can_see(c_id, npc->m_id)) {
 						for (const auto& coord : attacked_coords) {
 							if ((coord.first == npc->m_x) && (coord.second == npc->m_y)) {
-								npc->receive_damage(1 + level, c_id);
+								std::lock_guard<std::mutex> tl(timer_lock);
+								timer_queue.emplace(event{ npc->m_id, c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_DAMAGE });
 							}
 						}
 					}
@@ -1357,6 +1483,14 @@ void do_timer() {
 			timer_lock.unlock();
 
 			switch (k.event_id) {
+			case EV_DAMAGE: {
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_DAMAGE;
+				o->m_target_id = k.target_id;
+				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
+				break;
+			}
+
 			case EV_HEAL: {
 				EXP_OVER* o = new EXP_OVER;
 				o->m_io_type = IO_HEAL;
@@ -2134,7 +2268,8 @@ int API_do_npc_attack(lua_State* L) {
 				for (const auto& coord : attacked_coords) {
 					if ((coord.first == client->m_x) && (coord.second == client->m_y)) {
 						if (true == client->is_alive()) {
-							client->receive_damage(1, npc_id);
+							std::lock_guard<std::mutex> tl(timer_lock);
+							timer_queue.emplace(event{ client->m_id, npc_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), EV_DAMAGE });
 						}
 					}
 				}
