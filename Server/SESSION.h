@@ -55,7 +55,12 @@ struct event {
 extern std::priority_queue<event> timer_queue;
 extern std::mutex timer_lock;
 
-enum QUERY_TYPE { QU_LOGIN, QU_USER_LOGIN, QU_USER_REGISTER, QU_SELECT_AVATAR, QU_CREATE_AVATAR };
+enum QUERY_TYPE { 
+	QU_AUTO_SAVE, 
+	QU_LOGIN, QU_USER_LOGIN, QU_USER_REGISTER, 
+	QU_SELECT_AVATAR, QU_CREATE_AVATAR 
+};
+
 struct query {
 	int obj_id;
 	std::chrono::high_resolution_clock::time_point wakeup_time;

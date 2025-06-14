@@ -137,6 +137,10 @@ int main() {
 
 	setlocale(LC_ALL, "korean");
 
+	query_lock.lock();
+	query_queue.emplace(query{ INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::minutes(1), QU_AUTO_SAVE });
+	query_lock.unlock();
+
 	for (auto& w : workers)
 		w.join();
 	timer_thread.join();
@@ -1305,6 +1309,38 @@ void do_query() {
 			query_lock.unlock();
 
 			switch (q.query_id) {
+			case QU_AUTO_SAVE: {
+				for (auto& cl : g_clients) {
+					if (false == is_player(cl.first)) { continue; }
+
+					std::shared_ptr<SESSION> client = cl.second.load();
+					if (client == nullptr) { continue; }
+
+					if (client->m_state != ST_INGAME) { continue; }
+
+					// ExecDirect
+					wchar_t query_buf[256];
+					swprintf_s(query_buf, 256, L"EXEC sp_save_avatar %d, %d, %d, %d, %d, %d",
+						client->m_avatar_id,
+						static_cast<int>(client->m_exp), client->m_level,
+						static_cast<int>(client->m_hp),
+						client->m_x, client->m_y
+					);
+
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query_buf, SQL_NTS);
+					if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
+						HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					SQLCloseCursor(hstmt);
+				}
+
+				query_lock.lock();
+				query_queue.emplace(query{ INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::minutes(1), QU_AUTO_SAVE });
+				query_lock.unlock();
+				break;
+			}
+
 			case QU_LOGIN: {
 				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
 				if (nullptr == client) { break; }
