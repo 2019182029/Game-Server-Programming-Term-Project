@@ -61,6 +61,11 @@ std::vector<std::pair<short, short>> a_star(short sx, short sy, short gx, short 
 void do_timer();
 
 //////////////////////////////////////////////////
+// DB
+void do_query();
+void HandleDiagnosticRecord(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode);
+
+//////////////////////////////////////////////////
 // TERRAIN
 std::vector<uint8_t> terrain((W_WIDTH* W_HEIGHT + 7) / 8, 0);
 
@@ -125,6 +130,7 @@ int main() {
 	for (unsigned int i = 0; i < std::thread::hardware_concurrency(); ++i)
 		workers.emplace_back(worker);
 	std::thread timer_thread(do_timer);
+	std::thread query_thread(do_query);
 
 	for (auto& w : workers)
 		w.join();
@@ -204,6 +210,79 @@ void worker() {
 				memcpy(eo->m_buffer, p, remain_data);
 			}
 			client->do_recv();
+			break;
+		}
+
+		case IO_LOGIN: {
+			int client_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> client = g_clients.at(client_id);
+			if (nullptr == client) { break; }
+
+			client->send_login_info();
+
+			// Add Client into Sector
+			short sx = client->m_x / SECTOR_WIDTH;
+			short sy = client->m_y / SECTOR_HEIGHT;
+			{
+				std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
+				g_sector[sy][sx].insert(client_id);
+			}
+
+			// Search Nearby Objects by Sector
+			for (short dy = -1; dy <= 1; ++dy) {
+				for (short dx = -1; dx <= 1; ++dx) {
+					short nx = sx + dx;
+					short ny = sy + dy;
+
+					if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+
+					std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
+					for (auto pl : g_sector[ny][nx]) {
+						std::shared_ptr<SESSION> other = g_clients.at(pl);
+						if (nullptr == other) { continue; }
+
+						if (ST_INGAME != other->m_state) { continue; }
+						if (other->m_id == client_id) { continue; }
+
+						if (true == can_see(client_id, other->m_id)) {
+							client->send_add_object(other->m_id);
+
+							if (is_player(other->m_id)) { 
+								other->send_add_object(client_id);
+							} else { 
+								other->try_wake_up(client_id);
+							}
+						}
+					}
+				}
+			}
+
+			delete eo;
+			break;
+		}
+
+		case IO_LOGIN_OK: {
+			int client_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> client = g_clients.at(client_id);
+			if (nullptr == client) { break; }
+
+			client->send_login_ok(eo->m_avatars);
+
+			delete eo;
+			break;
+		}
+
+		case IO_LOGIN_FAIL: {
+			int client_id = static_cast<int>(key);
+
+			std::shared_ptr<SESSION> client = g_clients.at(client_id);
+			if (nullptr == client) { break; }
+			
+			client->send_login_fail();
+
+			delete eo;
 			break;
 		}
 
@@ -584,46 +663,49 @@ void process_packet(int c_id, char* packet) {
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 
-		strcpy(client->m_name, p->name);
-		client->m_state = ST_INGAME;
-		client->send_login_info();
+		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_LOGIN };
+		strncpy(q.client_id, p->id, ID_SIZE);
+		strncpy(q.client_pw, p->pw, PW_SIZE);
 
-		// Add Client into Sector
-		short sx = client->m_x / SECTOR_WIDTH;
-		short sy = client->m_y / SECTOR_HEIGHT;
-		{
-			std::lock_guard<std::mutex> sl(g_mutex[sy][sx]);
-			g_sector[sy][sx].insert(c_id);
-		}
+		query_lock.lock();
+		query_queue.emplace(q);
+		query_lock.unlock();
+		break;
+	}
 
-		// Search Nearby Objects by Sector
-		for (short dy = -1; dy <= 1; ++dy) {
-			for (short dx = -1; dx <= 1; ++dx) {
-				short nx = sx + dx;
-				short ny = sy + dy;
+	case CS_USER_LOGIN: {
+		CS_USER_LOGIN_PACKET* p = reinterpret_cast<CS_USER_LOGIN_PACKET*>(packet);
 
-				if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
+		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_USER_LOGIN };
+		strncpy(q.client_id, p->id, ID_SIZE);
+		strncpy(q.client_pw, p->pw, PW_SIZE);
 
-				std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
-				for (auto pl : g_sector[ny][nx]) {
-					std::shared_ptr<SESSION> other = g_clients.at(pl);
-					if (nullptr == other) { continue; }
+		query_lock.lock();
+		query_queue.emplace(q);
+		query_lock.unlock();
+		break;
+	}
 
-					if (ST_INGAME != other->m_state) { continue; }
-					if (other->m_id == c_id) { continue; }
+	case CS_SELECT_AVATAR: {
+		CS_SELECT_AVATAR_PACKET* p = reinterpret_cast<CS_SELECT_AVATAR_PACKET*>(packet);
 
-					if (true == can_see(c_id, other->m_id)) {
-						client->send_add_object(other->m_id);
+		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_SELECT_AVATAR };
+		q.avatar_id = p->avatar_id;
 
-						if (is_player(other->m_id)) { 
-							other->send_add_object(c_id); 
-						} else { 
-							other->try_wake_up(c_id); 
-						}
-					}
-				}
-			}
-		}
+		query_lock.lock();
+		query_queue.emplace(q);
+		query_lock.unlock();
+		break;
+	}
+
+	case CS_CREATE_AVATAR: {
+		CS_SELECT_AVATAR_PACKET* p = reinterpret_cast<CS_SELECT_AVATAR_PACKET*>(packet);
+
+		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_CREATE_AVATAR };
+
+		query_lock.lock();
+		query_queue.emplace(q);
+		query_lock.unlock();
 		break;
 	}
 
@@ -1124,6 +1206,280 @@ void do_timer() {
 			timer_lock.lock();
 			timer_queue.pop();
 			timer_lock.unlock();
+		}
+	}
+}
+
+std::wstring to_wstring(const char* str) {
+	int len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+	std::wstring wstr(len, 0);
+	MultiByteToWideChar(CP_UTF8, 0, str, -1, &wstr[0], len);
+	wstr.pop_back(); 
+	return wstr;
+}
+
+void do_query() {
+	SQLHENV henv = nullptr;
+	SQLHDBC hdbc = nullptr;
+	SQLHSTMT hstmt = nullptr;
+
+	SQLRETURN retcode;
+
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+	if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { goto clean_up; }
+
+	retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+	if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { goto clean_up; }
+
+	retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+	if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { goto clean_up; }
+
+	retcode = SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+	if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { goto clean_up; }
+
+	retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2019182029_GSP", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+	if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { goto clean_up; }
+
+	retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+	if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { goto clean_up; }
+
+	// Query Loop
+	while (true) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+		while (true) {
+			query_lock.lock();
+			if (query_queue.empty()) {
+				query_lock.unlock();
+				break;
+			}
+
+			query q = query_queue.top();
+
+			if (q.wakeup_time > std::chrono::high_resolution_clock::now()) {
+				query_lock.unlock();
+				break;
+			}
+			query_lock.unlock();
+
+			switch (q.query_id) {
+			case QU_LOGIN: {
+				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
+				if (nullptr == client) { break; }
+
+				// ExecDirect
+				std::wstring w_id = to_wstring(q.client_id);
+				std::wstring w_pw = to_wstring(q.client_pw);
+
+				wchar_t query_buf[256];
+				swprintf_s(query_buf, 256, L"EXEC sp_get_avatars N'%s', N'%s'", w_id.c_str(), w_pw.c_str());
+
+				std::wstring query = query_buf;
+
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query.c_str(), SQL_NTS);
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) { 
+					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+					SQLCloseCursor(hstmt);
+					disconnect(q.obj_id);
+					break; 
+				}
+
+				// Fetch
+				SQLFetch(hstmt);
+				
+				int avatar_id, x, y, exp, level, hp;
+
+				SQLGetData(hstmt, 1, SQL_C_SLONG, &avatar_id, 0, NULL);
+				SQLGetData(hstmt, 3, SQL_C_SLONG, &exp, 0, NULL);
+				SQLGetData(hstmt, 4, SQL_C_SLONG, &level, 0, NULL);
+				SQLGetData(hstmt, 5, SQL_C_SLONG, &hp, 0, NULL);
+				SQLGetData(hstmt, 6, SQL_C_SLONG, &x, 0, NULL);
+				SQLGetData(hstmt, 7, SQL_C_SLONG, &y, 0, NULL);
+
+				if (-1 == avatar_id) {
+					SQLCloseCursor(hstmt);
+					disconnect(q.obj_id);
+				}
+
+				client->m_x = x;
+				client->m_y = y;
+				client->m_exp = exp;
+				client->m_level = level;
+				strncpy(client->m_name, q.client_id, ID_SIZE);
+				client->m_avatar_id = avatar_id;
+				client->m_state = ST_INGAME;
+
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_LOGIN;
+				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+				SQLCloseCursor(hstmt);
+				break;
+			}
+
+			case QU_USER_LOGIN: {
+				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
+				if (nullptr == client) { break; }
+
+				// ExecDirect
+				std::wstring w_id = to_wstring(q.client_id);
+				std::wstring w_pw = to_wstring(q.client_pw);
+
+				wchar_t query_buf[256];
+				swprintf_s(query_buf, 256, L"EXEC sp_get_avatars N'%s', N'%s'", w_id.c_str(), w_pw.c_str());
+
+				std::wstring query = query_buf;
+
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query.c_str(), SQL_NTS);
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
+					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				// Fetch
+				bool valid = true;
+				std::vector<AVATAR> avatars;
+				int account_id, avatar_id, slot, level;
+
+				while (SQL_SUCCESS == SQLFetch(hstmt)) {
+					SQLGetData(hstmt, 1, SQL_C_SLONG, &account_id, 0, NULL);
+					SQLGetData(hstmt, 2, SQL_C_SLONG, &avatar_id, 0, NULL);
+					SQLGetData(hstmt, 3, SQL_C_SLONG, &slot, 0, NULL);
+					SQLGetData(hstmt, 4, SQL_C_SLONG, &level, 0, NULL);
+
+					if (-1 == account_id) {
+						SQLCloseCursor(hstmt);
+						valid = false;
+						break;
+					}
+
+					avatars.emplace_back(AVATAR{ avatar_id, slot, level });
+				}
+
+				if (false == valid) {
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				// Send
+				if (avatars.empty()) {
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				strncpy(client->m_name, q.client_id, ID_SIZE);
+				client->m_account_id = account_id;
+
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_LOGIN_OK;
+				o->m_avatars = std::move(avatars);
+				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+				SQLCloseCursor(hstmt);
+				break;
+			}
+
+			case QU_SELECT_AVATAR: {
+				std::shared_ptr<SESSION> client = g_clients.at(q.obj_id);
+				if (nullptr == client) { break; }
+
+				wchar_t query_buf[128];
+				swprintf_s(query_buf, 256, L"EXEC sp_select_avatar %d, %d", q.avatar_id, client->m_account_id);
+				
+				std::wstring query = query_buf;
+
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)query.c_str(), SQL_NTS);
+				if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
+					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+					SQLCloseCursor(hstmt);
+
+					EXP_OVER* o = new EXP_OVER;
+					o->m_io_type = IO_LOGIN_FAIL;
+					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+					break;
+				}
+
+				// Fetch
+				SQLFetch(hstmt);
+
+				int exp, level, hp, x, y;
+
+				SQLGetData(hstmt, 1, SQL_C_SLONG, &exp, 0, NULL);
+				SQLGetData(hstmt, 2, SQL_C_SLONG, &level, 0, NULL);
+				SQLGetData(hstmt, 3, SQL_C_SLONG, &hp, 0, NULL);
+				SQLGetData(hstmt, 4, SQL_C_SLONG, &x, 0, NULL);
+				SQLGetData(hstmt, 5, SQL_C_SLONG, &y, 0, NULL);
+
+				client->m_x = x;
+				client->m_y = y;
+				client->m_exp = exp;
+				client->m_level = level;
+				client->m_avatar_id = q.avatar_id;
+				client->m_state = ST_INGAME;
+
+				EXP_OVER* o = new EXP_OVER;
+				o->m_io_type = IO_LOGIN;
+				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
+
+				SQLCloseCursor(hstmt);
+				break;
+			}
+			case QU_CREATE_AVATAR: {
+				break;
+			}
+			}
+
+			query_lock.lock();
+			query_queue.pop();
+			query_lock.unlock();
+		}
+	}
+
+clean_up:
+	if (hstmt) {
+		SQLCancel(hstmt);
+		SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+	}
+
+	if (hdbc) {
+		SQLDisconnect(hdbc);
+		SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+	}
+
+	if (henv) {
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
+	}
+}
+
+void HandleDiagnosticRecord(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode) {
+	SQLSMALLINT iRec = 0;
+	SQLINTEGER  iError;
+	WCHAR       wszMessage[1000];
+	WCHAR       wszState[SQL_SQLSTATE_SIZE + 1];
+
+	if (RetCode == SQL_INVALID_HANDLE) {
+		fwprintf(stderr, L"Invalid handle!\n");
+		return;
+	}
+
+	while (SQLGetDiagRec(hType, hHandle, ++iRec, wszState, &iError, wszMessage,
+		(SQLSMALLINT)(sizeof(wszMessage) / sizeof(WCHAR)), (SQLSMALLINT*)NULL) == SQL_SUCCESS) {
+		// Hide data truncated..
+		if (wcsncmp(wszState, L"01004", 5)) {
+			fwprintf(stderr, L"[%5.5s] %s (%d)\n", wszState, wszMessage, iError);
 		}
 	}
 }

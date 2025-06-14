@@ -3,12 +3,14 @@
 // Server
 constexpr int PORT_NUM = 4000;
 constexpr int BUF_SIZE = 200;
-constexpr int NAME_SIZE = 20;
+constexpr int ID_SIZE = 32;
+constexpr int PW_SIZE = 64;
+constexpr int NAME_SIZE = 32;
 constexpr int CHAT_SIZE = 100;
 
 // Character
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 200000;
+constexpr int MAX_NPC = 0;
 constexpr int INVALID_ID = -1;
 
 constexpr int PAWN = 0;
@@ -48,11 +50,14 @@ constexpr int SECTOR_COLS = W_HEIGHT / SECTOR_WIDTH;
 
 // Packet ID
 constexpr char CS_LOGIN = 0;
-constexpr char CS_MOVE = 1;
-constexpr char CS_CHAT = 2;
-constexpr char CS_ATTACK = 3;			// 4 방향 공격
-constexpr char CS_TELEPORT = 4;			// RANDOM한 위치로 Teleport, Stress Test할 때 Hot Spot현상을 피하기 위해 구현
-constexpr char CS_LOGOUT = 5;			// 클라이언트에서 정상적으로 접속을 종료하는 패킷
+constexpr char CS_USER_LOGIN = 1;
+constexpr char CS_MOVE = 2;
+constexpr char CS_CHAT = 3;
+constexpr char CS_ATTACK = 4;			// 4 방향 공격
+constexpr char CS_TELEPORT = 5;			// RANDOM한 위치로 Teleport, Stress Test할 때 Hot Spot현상을 피하기 위해 구현
+constexpr char CS_LOGOUT = 6;			// 클라이언트에서 정상적으로 접속을 종료하는 패킷
+constexpr char CS_SELECT_AVATAR = 7;
+constexpr char CS_CREATE_AVATAR = 8;
 
 constexpr char SC_LOGIN_INFO = 2;
 constexpr char SC_ADD_OBJECT = 3;
@@ -70,10 +75,46 @@ constexpr char SC_DEATH = 14;
 
 #pragma pack (push, 1)
 
+struct AVATAR {
+	int avatar_id;
+	int slot;
+	int level;
+};
+
+struct SC_LOGIN_OK_PACKET {
+	unsigned char size;
+	char	type;
+};
+
+struct SC_LOGIN_FAIL_PACKET {
+	unsigned char size;
+	char	type;
+	char	error_code;
+};
+
 struct CS_LOGIN_PACKET {
 	unsigned char size;
 	char	type;
-	char	name[NAME_SIZE];
+	char	id[ID_SIZE];
+	char	pw[PW_SIZE];
+};
+
+struct CS_SELECT_AVATAR_PACKET {
+	unsigned char size;
+	char	type;
+	int		avatar_id;
+};
+
+struct CS_CREATE_AVATAR_PACKET {
+	unsigned char size;
+	char	type;
+};
+
+struct CS_USER_LOGIN_PACKET {
+	unsigned char size;
+	char	type;
+	char	id[ID_SIZE];
+	char	pw[PW_SIZE];
 };
 
 struct CS_MOVE_PACKET {
@@ -143,16 +184,6 @@ struct SC_CHAT_PACKET {
 	char	type;
 	int		id;
 	char	mess[CHAT_SIZE];
-};
-
-struct SC_LOGIN_OK_PACKET {
-	unsigned char size;
-	char	type;
-};
-
-struct SC_LOGIN_FAIL_PACKET {
-	unsigned char size;
-	char	type;
 };
 
 struct SC_STAT_CHANGE_PACKET {

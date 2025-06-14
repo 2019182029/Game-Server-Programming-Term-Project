@@ -9,6 +9,9 @@ concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>
 std::priority_queue<event> timer_queue;
 std::mutex timer_lock;
 
+std::priority_queue<query> query_queue;
+std::mutex query_lock;
+
 //////////////////////////////////////////////////
 // EXP_OVER
 EXP_OVER::EXP_OVER() {
@@ -79,6 +82,37 @@ void SESSION::do_send(void* buff) {
 	auto ret = WSASend(m_c_socket, o->m_wsabuf, 1, &send_bytes, 0, &(o->m_over), NULL);
 }
 
+void SESSION::send_login_ok(const std::vector<AVATAR>& avatars) {
+	// Alloc Memory
+	size_t avatar_count = avatars.size();
+	size_t packet_size = sizeof(SC_LOGIN_OK_PACKET) + (avatar_count * sizeof(AVATAR));
+
+	char* buffer = new char[packet_size];
+
+	// Header
+	SC_LOGIN_OK_PACKET* p = reinterpret_cast<SC_LOGIN_OK_PACKET*>(buffer);
+	p->size = static_cast<unsigned char>(packet_size);
+	p->type = SC_LOGIN_OK;
+
+	// Copy Avatar Data
+	AVATAR* ptr = reinterpret_cast<AVATAR*>(buffer + sizeof(SC_LOGIN_OK_PACKET));
+	for (size_t i = 0; i < avatar_count; ++i) {
+		ptr[i] = avatars[i];
+	}
+
+	do_send(p);
+
+	delete[] buffer;
+}
+
+void SESSION::send_login_fail() {
+	SC_LOGIN_FAIL_PACKET p;
+	p.size = sizeof(SC_LOGIN_FAIL_PACKET);
+	p.type = SC_LOGIN_FAIL;
+	//p.error_code = ;
+	do_send(&p);
+}
+
 void SESSION::send_login_info() {
 	SC_LOGIN_INFO_PACKET p;
 	p.size = sizeof(SC_LOGIN_INFO_PACKET);
@@ -90,7 +124,6 @@ void SESSION::send_login_info() {
 	p.max_hp = m_max_hp;
 	p.exp = m_exp;
 	p.level = m_level;
-	
 	do_send(&p);
 }
 

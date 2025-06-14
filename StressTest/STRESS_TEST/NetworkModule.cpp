@@ -315,11 +315,11 @@ void Adjust_Number_Of_Client()
 	CS_LOGIN_PACKET l_packet;
 
 	int temp = num_connections;
-	sprintf_s(l_packet.name, "%d", temp);
 	l_packet.size = sizeof(l_packet);
 	l_packet.type = CS_LOGIN;
+	sprintf_s(l_packet.id, "%d", temp);
+	sprintf_s(l_packet.pw, "%d", temp);
 	SendPacket(num_connections, &l_packet);
-
 
 	int ret = WSARecv(g_clients[num_connections].client_socket, &g_clients[num_connections].recv_over.wsabuf, 1,
 		NULL, &recv_flag, &g_clients[num_connections].recv_over.over, NULL);

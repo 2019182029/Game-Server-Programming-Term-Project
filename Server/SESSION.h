@@ -21,6 +21,8 @@
 #include "protocol.h"
 #include "include/lua.hpp"
 
+#include <sqlext.h>
+
 #pragma comment (lib, "WS2_32.LIB")
 #pragma comment (lib, "MSWSock.LIB")
 #pragma comment (lib, "lua54.lib")
@@ -52,10 +54,35 @@ struct event {
 extern std::priority_queue<event> timer_queue;
 extern std::mutex timer_lock;
 
+enum QUERY_TYPE { QU_LOGIN, QU_USER_LOGIN, QU_SELECT_AVATAR, QU_CREATE_AVATAR };
+struct query {
+	int obj_id;
+	std::chrono::high_resolution_clock::time_point wakeup_time;
+	QUERY_TYPE query_id;
+
+	int avatar_id;
+	char client_id[ID_SIZE];
+	char client_pw[PW_SIZE];
+
+	query(int o_id, std::chrono::high_resolution_clock::time_point w_time, QUERY_TYPE q_id) {
+		obj_id = o_id;
+		wakeup_time = w_time;
+		query_id = q_id;
+	}
+
+	constexpr bool operator < (const query& _Left) const {
+		return (wakeup_time > _Left.wakeup_time);
+	}
+};
+
+extern std::priority_queue<query> query_queue;
+extern std::mutex query_lock;
+
 //////////////////////////////////////////////////
 // EXP_OVER
 enum IO_TYPE { 
 	IO_ACCEPT, IO_SEND, IO_RECV, 
+	IO_LOGIN, IO_LOGIN_OK, IO_LOGIN_FAIL,
 	IO_PLAYER_DIE, IO_PLAYER_RESPAWN,
 	IO_NPC_MOVE, IO_NPC_ATTACK, IO_NPC_DIE, IO_NPC_RESPAWN 
 };
@@ -70,6 +97,8 @@ public:
 	IO_TYPE m_io_type;
 
 	int m_target_id;
+
+	std::vector<AVATAR> m_avatars;
 
 public:
 	EXP_OVER();
@@ -105,6 +134,9 @@ public:
 	lua_State* m_lua;
 	std::mutex m_lua_lock;
 
+	int m_account_id;
+	int m_avatar_id;
+
 public:
 	SESSION();
 	SESSION(int id);
@@ -114,6 +146,8 @@ public:
 	void do_recv();
 	void do_send(void* buff);
 
+	void send_login_ok(const std::vector<AVATAR>& avatars);
+	void send_login_fail();
 	void send_login_info();
 	void send_add_object(int c_id);
 	void send_move_object(int c_id);
