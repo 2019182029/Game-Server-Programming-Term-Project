@@ -82,6 +82,8 @@ int API_do_npc_random_move(lua_State* L);
 int API_do_npc_chase(lua_State* L);
 int API_do_npc_attack(lua_State* L);
 int API_do_npc_sleep(lua_State* L);
+int API_a_star(lua_State* L);
+int API_is_valid_move(lua_State* L);
 int API_is_in_chase_range(lua_State* L);
 int API_is_in_attack_range(lua_State* L);
 int API_get_x(lua_State* L);
@@ -325,10 +327,11 @@ void worker() {
 			client->send_death(client_id);
 
 			for (auto& cl : near_list) {
+				if (false == is_player(cl)) { continue; }
+
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
 				if (other->m_id == client_id) { continue; }
 
@@ -517,10 +520,11 @@ void worker() {
 					if (nx < 0 || ny < 0 || nx >= SECTOR_COLS || ny >= SECTOR_ROWS) { continue; }
 
 					for (auto cl : g_sector[ny][nx]) {
+						if (false == is_player(cl)) { continue; }
+
 						std::shared_ptr<SESSION> other = g_clients.at(cl);
 						if (nullptr == other) { continue; }
 
-						if (false == is_player(other->m_id)) { continue; }
 						if (ST_INGAME != other->m_state) { continue; }
 						if (other->m_id == npc->m_id) { continue; }
 
@@ -569,10 +573,11 @@ void worker() {
 				client->send_level_up(client_id);
 
 				for (auto& cl : client_vl) {
+					if (false == is_player(cl)) { continue; }
+
 					std::shared_ptr<SESSION> other = g_clients.at(cl);
 					if (nullptr == other) continue;
 
-					if (false == is_player(other->m_id)) { continue; }
 					if (ST_INGAME != other->m_state) { continue; }
 					if (other->m_id == client_id) { continue; }
 
@@ -620,10 +625,11 @@ void worker() {
 
 					std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
 					for (auto cl : g_sector[ny][nx]) {
+						if (false == is_player(cl)) { continue; }
+
 						std::shared_ptr<SESSION> other = g_clients.at(cl);
 						if (nullptr == other) { continue; }
 
-						if (false == is_player(other->m_id)) { continue; }
 						if (ST_INGAME != other->m_state) { continue; }
 						if (other->m_id == npc_id) { continue; }
 
@@ -653,10 +659,11 @@ void disconnect(int c_id) {
 	client->m_vl.unlock();
 
 	for (auto& cl : vl) {
+		if (false == is_player(cl)) { continue; }
+
 		std::shared_ptr<SESSION> other = g_clients.at(cl);
 		if (nullptr == other) continue;
 
-		if (false == is_player(other->m_id)) { continue; }
 		if (ST_INGAME != other->m_state) continue;
 		if (other->m_id == c_id) continue;
 
@@ -778,10 +785,11 @@ void process_packet(int c_id, char* packet) {
 		client->m_vl.unlock();
 
 		for (auto& cl : vlist) {
+			if (false == is_player(cl)) { continue; }
+
 			std::shared_ptr<SESSION> other = g_clients.at(cl);
 			if (nullptr == other) continue;
 
-			if (false == is_player(other->m_id)) { continue; }
 			if (ST_INGAME != other->m_state) { continue; }
 			if (other->m_id == c_id) { continue; }
 
@@ -1067,10 +1075,11 @@ void process_packet(int c_id, char* packet) {
 			client->m_vl.unlock();
 
 			for (auto& cl : vlist) {
+				if (false == is_player(cl)) { continue; }
+
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) continue;
 
-				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
 				if (other->m_id == c_id) { continue; }
 
@@ -1168,7 +1177,6 @@ void init_npc() {
 
 		p->m_y = static_cast<short>(std::stoi(y_str));
 
-
 		// Lua
 		p->m_lua = luaL_newstate();
 		luaL_openlibs(p->m_lua);
@@ -1184,6 +1192,8 @@ void init_npc() {
 		lua_register(p->m_lua, "API_do_npc_chase", API_do_npc_chase);
 		lua_register(p->m_lua, "API_do_npc_attack", API_do_npc_attack);
 		lua_register(p->m_lua, "API_do_npc_sleep", API_do_npc_sleep);
+		lua_register(p->m_lua, "API_a_star", API_a_star);
+		lua_register(p->m_lua, "API_is_valid_move", API_is_valid_move);
 		lua_register(p->m_lua, "API_is_in_chase_range", API_is_in_chase_range);
 		lua_register(p->m_lua, "API_is_in_attack_range", API_is_in_attack_range);
 		lua_register(p->m_lua, "API_get_x", API_get_x);
@@ -1875,18 +1885,20 @@ bool is_valid_move(int x, int y) {
 
 int API_do_npc_random_move(lua_State* L) {
 	// Lua
-	int npc_id = (int)lua_tonumber(L, -2);
+	int npc_id = (int)lua_tonumber(L, 1);
+	int new_x = (int)lua_tonumber(L, 2);
+	int new_y = (int)lua_tonumber(L, 3);
 
 	std::unordered_set<int> old_vl;
 
-	for (int i = 1; i <= lua_rawlen(L, 2); ++i) {
-		lua_rawgeti(L, 2, i); 
+	for (int i = 1; i <= lua_rawlen(L, 4); ++i) {
+		lua_rawgeti(L, 4, i); 
 		int id = (int)lua_tointeger(L, -1);
 		old_vl.insert(id);
 		lua_pop(L, 1);
 	}
 
-	lua_pop(L, 2);
+	lua_pop(L, 4);
 
 	// Move
 	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
@@ -1894,32 +1906,9 @@ int API_do_npc_random_move(lua_State* L) {
 
 	short old_x = npc->m_x;
 	short old_y = npc->m_y;
-	short new_x = old_x;
-	short new_y = old_y;
 
-	std::array<std::pair<short, short>, 8> directions = {
-		std::make_pair( 0, -1),  // Up
-		std::make_pair(-1, -1),  // Up-Left
-		std::make_pair( 1, -1),  // Up-Right
-		std::make_pair( 0,  1),  // Down
-		std::make_pair(-1,  1),  // Down-Left
-		std::make_pair( 1,  1),  // Down-Right
-		std::make_pair(-1,  0),  // Left
-		std::make_pair( 1,  0)   // Right
-	};
-
-	std::shuffle(directions.begin(), directions.end(), rng);
-
-	for (auto [dx, dy] : directions) {
-		new_x = old_x + dx;
-		new_y = old_y + dy;
-
-		if (true == is_valid_move(new_x, new_y)) {
-			npc->m_x = new_x;
-			npc->m_y = new_y;
-			break;
-		}
-	}
+	npc->m_x = new_x;
+	npc->m_y = new_y;
 
 	// Update Sector
 	short sx = new_x / SECTOR_WIDTH;
@@ -1940,10 +1929,11 @@ int API_do_npc_random_move(lua_State* L) {
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
 
 			for (auto cl : g_sector[ny][nx]) {
+				if (false == is_player(cl)) { continue; }
+
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
 				if (other->m_id == npc_id) { continue; }
 
@@ -1989,19 +1979,21 @@ int API_do_npc_random_move(lua_State* L) {
 
 int API_do_npc_chase(lua_State* L) {
 	// Lua
-	int npc_id = (int)lua_tonumber(L, -3);
-	int target_id = (int)lua_tonumber(L, -2);
+	int npc_id = (int)lua_tonumber(L, 1);
+	int target_id = (int)lua_tonumber(L, 2);
+	int new_x = (int)lua_tonumber(L, 3);
+	int new_y = (int)lua_tonumber(L, 4);
 
 	std::unordered_set<int> old_vl;
 
-	for (int i = 1; i <= lua_rawlen(L, -1); ++i) {
-		lua_rawgeti(L, -1, i);
+	for (int i = 1; i <= lua_rawlen(L, 5); ++i) {
+		lua_rawgeti(L, 5, i);
 		int id = (int)lua_tointeger(L, -1);
 		old_vl.insert(id);
 		lua_pop(L, 1);
 	}
 
-	lua_pop(L, 3);
+	lua_pop(L, 5);
 
 	// Move
 	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
@@ -2011,21 +2003,11 @@ int API_do_npc_chase(lua_State* L) {
 		return 0; 
 	}
 
-	auto path = a_star(npc->m_x, npc->m_y, client->m_x, client->m_y);
-
-	if (2 >= path.size()) {
-		return 0;
-	}
-
-	auto [nx, ny] = path[1];
-
 	short old_x = npc->m_x;
 	short old_y = npc->m_y;
-	short new_x = old_x;
-	short new_y = old_y;
 
-	npc->m_x = new_x = nx;
-	npc->m_y = new_y = ny;
+	npc->m_x = new_x;
+	npc->m_y = new_y;
 
 	// Update Sector
 	short sx = new_x / SECTOR_WIDTH;
@@ -2045,10 +2027,11 @@ int API_do_npc_chase(lua_State* L) {
 
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
 			for (auto cl : g_sector[ny][nx]) {
+				if (false == is_player(cl)) { continue; }
+
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
 				if (other->m_id == npc->m_id) { continue; }
 
@@ -2139,10 +2122,11 @@ int API_do_npc_attack(lua_State* L) {
 	// Damage Logic
 	for (const auto& sector : attacked_sectors) {
 		for (const auto& cl : g_sector[sector.second][sector.first]) {
+			if (false == is_player(cl)) { continue; }
+
 			std::shared_ptr<SESSION> client = g_clients.at(cl);
 			if (nullptr == client) { continue; }
 
-			if (false == is_player(client->m_id)) { continue; }
 			if (ST_INGAME != client->m_state) { continue; }
 			if (client->m_id == npc_id) { continue; }
 
@@ -2175,6 +2159,44 @@ int API_do_npc_sleep(lua_State* L) {
 	npc->sleep();
 
 	return 0;
+}
+
+int API_a_star(lua_State* L) {
+	int npc_id = (int)lua_tonumber(L, -2);
+	int target_id = (int)lua_tonumber(L, -1);
+
+	lua_pop(L, 2);
+
+	std::shared_ptr<SESSION> npc = g_clients.at(npc_id);
+	std::shared_ptr<SESSION> client = g_clients.at(target_id);
+
+	if ((nullptr == npc) || (nullptr == client)) {
+		return 0;
+	}
+
+	auto path = a_star(npc->m_x, npc->m_y, client->m_x, client->m_y);
+
+	if (2 >= path.size()) {
+		return 0;
+	}
+
+	auto [nx, ny] = path[1];
+
+	lua_pushnumber(L, nx);
+	lua_pushnumber(L, ny);
+
+	return 2;
+}
+
+int API_is_valid_move(lua_State* L) {
+	int x = (int)lua_tonumber(L, -2);
+	int y = (int)lua_tonumber(L, -1);
+
+	lua_pop(L, 2);
+
+	lua_pushboolean(L, x >= 0 && x < W_WIDTH && y >= 0 && y < W_HEIGHT && false == get_tile(x, y));
+
+	return 1;
 }
 
 int API_is_in_chase_range(lua_State* L) {
@@ -2294,10 +2316,11 @@ int API_get_vl(lua_State* L) {
 			std::lock_guard<std::mutex> lock(g_mutex[ny][nx]);
 
 			for (auto cl : g_sector[ny][nx]) {
+				if (false == is_player(cl)) { continue; }
+
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
 				if (nullptr == other) { continue; }
 
-				if (false == is_player(other->m_id)) { continue; }
 				if (ST_INGAME != other->m_state) { continue; }
 				if (other->m_id == npc_id) { continue; }
 

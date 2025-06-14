@@ -20,21 +20,52 @@ function do_npc_random_move()
 		return;
 	end
 
-	local new_vl = API_do_npc_random_move(npc_id, old_vl);
+	local x = API_get_x(npc_id);
+	local y = API_get_y(npc_id);
 
-	for _, c_id in ipairs(new_vl) do
-        if API_is_in_attack_range(npc_id, c_id) then
-			API_register_event(npc_id, c_id, true);
+	local directions = {
+		{ dx = -2, dy = -1 },
+		{ dx = -2, dy =  1 },
+		{ dx = -1, dy = -2 },
+		{ dx = -1, dy =  2 },
+		{ dx =  1, dy = -2 },
+		{ dx =  1, dy =  2 },
+		{ dx =  2, dy = -1 },
+		{ dx =  2, dy =  1 },
+	};
+
+	-- Shuffle
+	for i = #directions, 2, -1 do
+		local j = math.random(1, i)
+		directions[i], directions[j] = directions[j], directions[i]
+	end
+
+	for _, move in ipairs(directions) do
+		local new_x = x + move.dx
+		local new_y = y + move.dy
+
+		if API_is_valid_move(new_x, new_y) then
+			local new_vl = API_do_npc_random_move(npc_id, new_x, new_y, old_vl);
+
+			for _, c_id in ipairs(new_vl) do
+				if API_is_in_attack_range(npc_id, c_id) then
+					API_register_event(npc_id, c_id, true);
+					return;
+				end
+			end
+			
+			API_register_event(npc_id, -1, false);
 			return;
 		end
-    end
+	end
 	
-	API_register_event(npc_id, -1, false);
+	API_do_npc_sleep(npc_id);
 end
 
 function do_npc_chase(target_id)
 	local old_vl = API_get_vl(npc_id);
-
+	
+	-- Check Target is in Chase Range
 	if not API_is_in_chase_range(npc_id, target_id) then
 		local found = false;
 
@@ -52,12 +83,21 @@ function do_npc_chase(target_id)
 		end
 	end
 
+	-- Check Target is in Attack Range
 	if API_is_in_attack_range(npc_id, target_id) then
 		API_register_event(npc_id, target_id, true);
 		return;
 	end
 
-	API_do_npc_chase(npc_id, target_id, old_vl);
+	-- A*
+	local new_x, new_y = API_a_star(npc_id, target_id)
+
+	if new_x == nil or new_y == nil then
+		API_do_npc_sleep(npc_id);
+		return;
+	end
+
+	API_do_npc_chase(npc_id, target_id, new_x, new_y, old_vl);
 	
 	API_register_event(npc_id, target_id, false);
 end
