@@ -253,6 +253,16 @@ void SESSION::send_death(int c_id) {
 	do_send(&p);
 }
 
+void SESSION::send_stat_change() {
+	SC_STAT_CHANGE_PACKET p;
+	p.size = sizeof(SC_STAT_CHANGE_PACKET);
+	p.type = SC_STAT_CHANGE;
+	p.hp = m_hp;
+	p.exp = m_exp;
+	p.level = m_level;
+	do_send(&p);
+}
+
 void SESSION::try_wake_up(int target_id) {
 	switch (m_level) {
 	case KNIGHT: {
@@ -315,6 +325,8 @@ void SESSION::receive_damage(int damage, int target_id) {
 }
 
 void SESSION::heal() {
+	if (false == is_alive()) { return; }
+
 	while (true) {
 		int expected = m_hp;
 
@@ -341,4 +353,8 @@ void SESSION::respawn(short x, short y) {
 	m_x = x;
 	m_y = y;
 	m_hp = m_max_hp;
+	m_exp = 0;
+	m_level = max(0, m_level - 1);
+
+	send_stat_change();
 }

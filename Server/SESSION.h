@@ -176,6 +176,7 @@ public:
 	void send_damage(int hp);
 	void send_heal(int hp);
 	void send_death(int c_id);
+	void send_stat_change();
 
 	void try_wake_up(int target_id);
 	void wake_up(int target_id);

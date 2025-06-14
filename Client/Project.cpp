@@ -1107,6 +1107,14 @@ void process_packet(char* packet) {
 		}
 		break;
 	}
+
+	case SC_STAT_CHANGE: {
+		SC_STAT_CHANGE_PACKET* p = reinterpret_cast<SC_STAT_CHANGE_PACKET*>(packet);
+		player.m_hp = p->hp;
+		player.m_exp = p->exp;
+		player.m_level = p->level;
+		break;
+	}
 	}
 	InvalidateRect(g_hWnd, NULL, FALSE);
 }

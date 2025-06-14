@@ -363,9 +363,6 @@ void worker() {
 
 			client->respawn(new_x, new_y);
 
-			client->m_x = new_x;
-			client->m_y = new_y;
-
 			// Update Sector
 			update_sector(client_id, old_x, old_y, new_x, new_y);
 
