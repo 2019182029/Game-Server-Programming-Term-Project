@@ -604,7 +604,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 					do_send(&p);
 
 					char buf[128];
-					sprintf_s(buf, "[%s] : %s", player.m_name, chat_input);
+					sprintf_s(buf, "[%s] : %s", player.m_name, chat_input.c_str());
 					chat_log.emplace_back(buf);
 					if (chat_log.size() > MAX_CHAT_LINE) {
 						chat_log.erase(chat_log.begin());
@@ -827,7 +827,7 @@ void ShowAvatarSelectionScreen(HWND hWnd, const std::vector<AVATAR>& avatars) {
 			hAvatarButton[i] = CreateWindow(L"BUTTON", L"Select",
 				WS_CHILD | WS_VISIBLE,
 				x + i * (avatar_size + spacing), y + avatar_size + 10, avatar_size, 30,
-				hWnd, (HMENU)(3000 + i), nullptr, nullptr);
+				hWnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(3000 + i)), nullptr, nullptr);
 		} else {
 			HBITMAP hWhite = CreateWhiteBitmap(avatar_size, avatar_size);
 			SendMessage(hAvatarImage[i], STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)hWhite);
@@ -835,7 +835,7 @@ void ShowAvatarSelectionScreen(HWND hWnd, const std::vector<AVATAR>& avatars) {
 			hAvatarButton[i] = CreateWindow(L"BUTTON", L"Create",
 				WS_CHILD | WS_VISIBLE,
 				x + i * (avatar_size + spacing), y + avatar_size + 10, avatar_size, 30,
-				hWnd, (HMENU)(3000 + i), nullptr, nullptr);
+				hWnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(3000 + i)), nullptr, nullptr);
 		}
 	}
 }
@@ -1078,7 +1078,7 @@ void process_packet(char* packet) {
 		player.m_exp += p->exp;
 
 		char buf[128];
-		sprintf_s(buf, "Defeated Npc %d and Gained %d Exps!", p->name, p->exp);
+		sprintf_s(buf, "Defeated Npc %s and Gained %d Exps!", p->name, p->exp);
 		chat_log.emplace_back(buf);
 		if (chat_log.size() > MAX_CHAT_LINE) {
 			chat_log.erase(chat_log.begin());

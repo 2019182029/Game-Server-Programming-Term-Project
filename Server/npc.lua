@@ -24,14 +24,10 @@ function do_npc_random_move()
 	local y = API_get_y(npc_id);
 
 	local directions = {
-		{ dx = -2, dy = -1 },
-		{ dx = -2, dy =  1 },
-		{ dx = -1, dy = -2 },
-		{ dx = -1, dy =  2 },
-		{ dx =  1, dy = -2 },
-		{ dx =  1, dy =  2 },
-		{ dx =  2, dy = -1 },
-		{ dx =  2, dy =  1 },
+		{ dx = -2, dy = -1 }, { dx = -2, dy =  1 },
+		{ dx = -1, dy = -2 }, { dx = -1, dy =  2 },
+		{ dx =  1, dy = -2 }, { dx =  1, dy =  2 },
+		{ dx =  2, dy = -1 }, { dx =  2, dy =  1 },
 	};
 
 	-- Shuffle
