@@ -20,6 +20,7 @@ using namespace chrono;
 
 extern HWND		hWnd;
 std::string		server_ip;
+int				init_id;
 
 const static int MAX_TEST = 50000;
 const static int MAX_CLIENTS = MAX_TEST * 2;
@@ -49,7 +50,7 @@ struct CLIENT {
 	int x;
 	int y;
 	atomic_bool connected;
-	atomic_bool alive;
+	atomic_bool alive = false;
 
 	SOCKET client_socket;
 	OverlappedEx recv_over;
@@ -91,7 +92,7 @@ void error_display(const char* msg, int err_no)
 	std::cout << msg;
 	std::wcout << L"¿¡·¯" << lpMsgBuf << std::endl;
 
-	MessageBox(hWnd, lpMsgBuf, L"ERROR", 0);
+	//MessageBox(hWnd, lpMsgBuf, L"ERROR", 0);
 	LocalFree(lpMsgBuf);
 	// while (true);
 }
@@ -138,9 +139,10 @@ void ProcessPacket(int ci, unsigned char packet[])
 		g_clients[my_id].id = login_packet->id;
 		g_clients[my_id].x = login_packet->x;
 		g_clients[my_id].y = login_packet->y;
-		g_clients[my_id].alive = true;
+		g_clients[my_id].alive = (0 < login_packet->hp) ? true : false;
 
 		CS_TELEPORT_PACKET p;
+		g_clients[ci].last_move_time = high_resolution_clock::now();
 		p.size = sizeof(CS_TELEPORT_PACKET);
 		p.type = CS_TELEPORT;
 		p.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
@@ -155,13 +157,10 @@ void ProcessPacket(int ci, unsigned char packet[])
 			if (-1 != my_id) {
 				g_clients[my_id].x = move_packet->x;
 				g_clients[my_id].y = move_packet->y;
-				if (false == g_clients[my_id].alive) {
-					g_clients[my_id].alive = true;
-				}
 			}
 			if (ci == my_id) {
 				if (0 != move_packet->move_time) {
-					auto d_ms = duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count() - move_packet->move_time;
+					unsigned int d_ms = static_cast<unsigned int>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count() - move_packet->move_time);
 
 					if (global_delay < d_ms) global_delay++;
 					else if (global_delay > d_ms) global_delay--;
@@ -172,11 +171,22 @@ void ProcessPacket(int ci, unsigned char packet[])
 	}
 
 	case SC_DEATH: {
-		SC_DEATH_PACKET* move_packet = reinterpret_cast<SC_DEATH_PACKET*>(packet);
-		if (move_packet->id < MAX_CLIENTS) {
-			int my_id = client_map[move_packet->id];
+		SC_DEATH_PACKET* death_packet = reinterpret_cast<SC_DEATH_PACKET*>(packet);
+		if (death_packet->id < MAX_CLIENTS) {
+			int my_id = client_map[death_packet->id];
 			if (-1 != my_id) {
 				g_clients[my_id].alive = false;
+			}
+		}
+		break;
+	}
+
+	case SC_RESPAWN: {
+		SC_RESPAWN_PACKET* respawn_packet = reinterpret_cast<SC_RESPAWN_PACKET*>(packet);
+		if (respawn_packet->id < MAX_CLIENTS) {
+			int my_id = client_map[respawn_packet->id];
+			if (-1 != my_id) {
+				g_clients[my_id].alive = true;
 			}
 		}
 		break;
@@ -339,8 +349,8 @@ void Adjust_Number_Of_Client()
 	int temp = num_connections;
 	l_packet.size = sizeof(l_packet);
 	l_packet.type = CS_LOGIN;
-	sprintf_s(l_packet.id, "%d", temp);
-	sprintf_s(l_packet.pw, "%d", temp);
+	sprintf_s(l_packet.id, "%d", temp + init_id);
+	sprintf_s(l_packet.pw, "%d", temp + init_id);
 	SendPacket(num_connections, &l_packet);
 
 	int ret = WSARecv(g_clients[num_connections].client_socket, &g_clients[num_connections].recv_over.wsabuf, 1,
@@ -365,13 +375,14 @@ void Test_Thread()
 		Adjust_Number_Of_Client();
 
 		for (int i = 0; i < num_connections; ++i) {
-			if (false == g_clients[i].connected) continue;
 			if (false == g_clients[i].alive) continue;
+			if (false == g_clients[i].connected) continue;
 			if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
-			g_clients[i].last_move_time = high_resolution_clock::now();
+
 			switch (rand() % 2) {
 			case 0: {
 				// Move
+				g_clients[i].last_move_time = high_resolution_clock::now();
 				CS_MOVE_PACKET my_packet;
 				my_packet.size = sizeof(my_packet);
 				my_packet.type = CS_MOVE;
@@ -381,7 +392,7 @@ void Test_Thread()
 				case 2: my_packet.direction = 2; break;
 				case 3: my_packet.direction = 3; break;
 				}
-				my_packet.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
+				my_packet.move_time = static_cast<unsigned int>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
 				SendPacket(i, &my_packet);
 				break;
 			}
@@ -403,6 +414,11 @@ void InitializeNetwork()
 {
 	std::cout << "Enter Server Address : ";
 	std::getline(std::cin, server_ip);
+
+	std::cout << "Enter Starting ID: ";
+	std::string str;
+	std::getline(std::cin, str);
+	init_id = std::stoi(str);
 
 	for (auto& cl : g_clients) {
 		cl.connected = false;

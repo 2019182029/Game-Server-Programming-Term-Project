@@ -165,14 +165,14 @@ void worker() {
 			else {
 				std::cout << "GQCS Error on Client[" << key << "]" << std::endl;
 				disconnect(static_cast<int>(key));
-				if (eo->m_io_type == IO_SEND) delete eo;
+				if (eo->m_io_type == IO_SEND) { g_exp_overs.release(eo); }
 				continue;
 			}
 		}
 
 		if ((eo->m_io_type == IO_RECV || eo->m_io_type == IO_SEND) && (0 == io_size)) {
 			disconnect(static_cast<int>(key));
-			if (eo->m_io_type == IO_SEND) delete eo;
+			if (eo->m_io_type == IO_SEND) { g_exp_overs.release(eo); }
 			continue;
 		}
 
@@ -194,7 +194,7 @@ void worker() {
 		}
 
 		case IO_SEND: {
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -204,22 +204,25 @@ void worker() {
 			std::shared_ptr<SESSION> client = g_clients.at(client_id);
 			if (nullptr == client) break;
 
-			int remain_data = io_size + client->m_remained;
-			char* p = eo->m_buffer;
-			while (remain_data > 0) {
-				int packet_size = p[0];
-				if (packet_size <= remain_data) {
-					process_packet(client_id, p);
-					p = p + packet_size;
-					remain_data = remain_data - packet_size;
-				}
-				else break;
+			int total_bytes = io_size + client->m_remained;
+			char* data = eo->m_buffer;
+
+			while (total_bytes > 0) {
+				int size = static_cast<unsigned char>(data[0]);
+
+				if (total_bytes < size) { break; }
+
+				process_packet(client_id, data);
+				data += size;
+				total_bytes -= size;
 			}
 
-			client->m_remained = remain_data;
-			if (remain_data > 0) {
-				memcpy(eo->m_buffer, p, remain_data);
+			client->m_remained = total_bytes;
+
+			if (total_bytes > 0) {
+				memcpy(eo->m_buffer, data, total_bytes);
 			}
+
 			client->do_recv();
 			break;
 		}
@@ -231,10 +234,11 @@ void worker() {
 			if (nullptr == client) { break; }
 
 			client->send_login_info();
-
-			timer_lock.lock();
-			timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
-			timer_lock.unlock();
+			
+			{
+				std::lock_guard<std::mutex> tl(timer_lock);
+				timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_HEAL });
+			}
 
 			// Add Client into Sector
 			short sx = client->m_x / SECTOR_WIDTH;
@@ -274,7 +278,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -286,7 +290,7 @@ void worker() {
 
 			client->send_login_ok(eo->m_avatars);
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -298,7 +302,7 @@ void worker() {
 			
 			client->send_login_fail(eo->m_error_code);
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -314,8 +318,9 @@ void worker() {
 			}
 
 			int hp;
+			int damage = is_player(obj_id) ? (target->m_level - 3) : (target->m_level + 1);
 
-			obj->receive_damage(target->m_level + 1, target_id, hp);
+			obj->receive_damage(damage, target_id, hp);
 
 			// Create View List by Sector
 			std::unordered_set<int> near_list;
@@ -324,9 +329,11 @@ void worker() {
 				obj->m_vl.lock();
 				near_list = obj->m_view_list;
 				obj->m_vl.unlock();
+
+				obj->send_damage(obj_id, hp);
 			} else {
-				int sx = obj->m_x / SECTOR_WIDTH;
-				int sy = obj->m_y / SECTOR_HEIGHT;
+				short sx = obj->m_x / SECTOR_WIDTH;
+				short sy = obj->m_y / SECTOR_HEIGHT;
 
 				for (int dy = -1; dy <= 1; ++dy) {
 					for (int dx = -1; dx <= 1; ++dx) {
@@ -352,8 +359,6 @@ void worker() {
 				}
 			}
 
-			obj->send_damage(obj_id, hp);
-
 			for (auto& cl : near_list) {
 				if (false == is_player(cl)) { continue; }
 
@@ -368,7 +373,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -387,9 +392,11 @@ void worker() {
 					obj->m_vl.lock();
 					near_list = obj->m_view_list;
 					obj->m_vl.unlock();
+
+					obj->send_heal(obj_id, hp);
 				} else {
-					int sx = obj->m_x / SECTOR_WIDTH;
-					int sy = obj->m_y / SECTOR_HEIGHT;
+					short sx = obj->m_x / SECTOR_WIDTH;
+					short sy = obj->m_y / SECTOR_HEIGHT;
 
 					// Create View List by Sector
 					for (int dy = -1; dy <= 1; ++dy) {
@@ -416,8 +423,6 @@ void worker() {
 					}
 				}
 
-				obj->send_heal(obj_id, hp);
-
 				for (auto& cl : near_list) {
 					if (false == is_player(cl)) { continue; }
 
@@ -433,7 +438,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -463,12 +468,13 @@ void worker() {
 					other->send_death(client_id);
 				}
 			}
+			
+			{
+				std::lock_guard<std::mutex> tl(timer_lock);
+				timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_PLAYER_RESPAWN });
+			}
 
-			timer_lock.lock();
-			timer_queue.emplace(event{ client_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_PLAYER_RESPAWN });
-			timer_lock.unlock();
-
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -494,8 +500,8 @@ void worker() {
 			// Update Sector
 			update_sector(client_id, old_x, old_y, new_x, new_y);
 
-			int sx = client->m_x / SECTOR_WIDTH;
-			int sy = client->m_y / SECTOR_HEIGHT;
+			short sx = client->m_x / SECTOR_WIDTH;
+			short sy = client->m_y / SECTOR_HEIGHT;
 
 			// Create View List by Sector
 			std::unordered_set<int> near_list;
@@ -525,7 +531,7 @@ void worker() {
 				}
 			}
 
-			client->send_move_object(client_id);
+			client->send_respawn(client_id);
 
 			for (auto& cl : near_list) {
 				std::shared_ptr<SESSION> other = g_clients.at(cl);
@@ -535,7 +541,7 @@ void worker() {
 					other->m_vl.lock();
 					if (other->m_view_list.count(client_id)) {
 						other->m_vl.unlock();
-						other->send_move_object(client_id);
+						other->send_respawn(client_id);
 					} else {
 						other->m_vl.unlock();
 						other->send_add_object(client_id);
@@ -557,7 +563,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -596,7 +602,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -619,7 +625,7 @@ void worker() {
 				break;
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -632,8 +638,8 @@ void worker() {
 
 			npc->sleep();
 
-			int sx = npc->m_x / SECTOR_WIDTH;
-			int sy = npc->m_y / SECTOR_HEIGHT;
+			short sx = npc->m_x / SECTOR_WIDTH;
+			short sy = npc->m_y / SECTOR_HEIGHT;
 
 			// Create View List by Sector
 			std::unordered_set<int> npc_vl;
@@ -672,10 +678,11 @@ void worker() {
 				std::lock_guard<std::mutex> lock(g_mutex[sy][sx]);
 				g_sector[sy][sx].erase(npc->m_id);
 			}
-
-			timer_lock.lock();
-			timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_NPC_RESPAWN });
-			timer_lock.unlock();
+			
+			{
+				std::lock_guard<std::mutex> tl(timer_lock);
+				timer_queue.emplace(event{ npc->m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(30), EV_NPC_RESPAWN });
+			}
 
 			// Player
 			int client_id = eo->m_target_id;
@@ -684,7 +691,7 @@ void worker() {
 			if (nullptr == client) break;
 
 			int prev_exp, curr_exp;
-			bool level_up = client->earn_exp(prev_exp, curr_exp);
+			bool level_up = client->earn_exp(npc->m_level, prev_exp, curr_exp);
 
 			// Send Earn Exp Packet to Player
 			client->send_earn_exp(npc->m_name, (curr_exp - prev_exp));
@@ -712,7 +719,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 
@@ -766,7 +773,7 @@ void worker() {
 				}
 			}
 
-			delete eo;
+			g_exp_overs.release(eo);
 			break;
 		}
 		}
@@ -798,8 +805,8 @@ void disconnect(int c_id) {
 	}
 
 	// Delete Client from Sector
-	int sx = client->m_x / SECTOR_WIDTH;
-	int sy = client->m_y / SECTOR_HEIGHT;
+	short sx = client->m_x / SECTOR_WIDTH;
+	short sy = client->m_y / SECTOR_HEIGHT;
 
 	{
 		std::lock_guard<std::mutex> lock(g_mutex[sy][sx]);
@@ -824,14 +831,16 @@ void process_packet(int c_id, char* packet) {
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 
-		{
-			std::lock_guard<std::mutex> lock(g_id_lock);
+		g_id_lock.lock();
 
-			if (g_ids.count(std::stoi(p->id))) {
-				disconnect(c_id);
-				break;
-			}
+		if (g_ids.count(std::stoi(p->id))) {
+			g_id_lock.unlock();
+
+			disconnect(c_id);
+			break;
 		}
+
+		g_id_lock.unlock();
 
 		query q{ c_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(10), QU_LOGIN };
 		strncpy(q.client_id, p->id, ID_SIZE);
@@ -850,7 +859,7 @@ void process_packet(int c_id, char* packet) {
 			std::lock_guard<std::mutex> lock(g_id_lock);
 
 			if (g_ids.count(std::stoi(p->id))) {
-				client->send_login_fail(DUPLICATED);
+				client->send_login_fail(EC_DUPLICATED_LOGIN);
 				break;
 			}
 		}
@@ -928,13 +937,13 @@ void process_packet(int c_id, char* packet) {
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
 
+		client->m_last_move_time = p->move_time;
+
 		if (false == client->is_alive()) {
 			// Send Rollback Packet in order to Prevent Cheating
 			client->send_move_object(c_id);
 			break;
 		}
-
-		client->m_last_move_time = p->move_time;
 
 		short old_x = client->m_x;
 		short old_y = client->m_y;
@@ -960,8 +969,8 @@ void process_packet(int c_id, char* packet) {
 		// Update Sector
 		update_sector(c_id, old_x, old_y, new_x, new_y);
 
-		int sx = client->m_x / SECTOR_WIDTH;
-		int sy = client->m_y / SECTOR_HEIGHT;
+		short sx = client->m_x / SECTOR_WIDTH;
+		short sy = client->m_y / SECTOR_HEIGHT;
 
 		// Create View List by Sector
 		std::unordered_set<int> near_list;
@@ -1048,8 +1057,8 @@ void process_packet(int c_id, char* packet) {
 		// Update Sector
 		update_sector(c_id, old_x, old_y, new_x, new_y);
 
-		int sx = client->m_x / SECTOR_WIDTH;
-		int sy = client->m_y / SECTOR_HEIGHT;
+		short sx = client->m_x / SECTOR_WIDTH;
+		short sy = client->m_y / SECTOR_HEIGHT;
 
 		// Create View List by Sector
 		std::unordered_set<int> near_list;
@@ -1484,7 +1493,7 @@ void do_timer() {
 
 			switch (k.event_id) {
 			case EV_DAMAGE: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_DAMAGE;
 				o->m_target_id = k.target_id;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
@@ -1492,28 +1501,28 @@ void do_timer() {
 			}
 
 			case EV_HEAL: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_HEAL;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 				break;
 			}
 
 			case EV_PLAYER_DIE: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_PLAYER_DIE;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 				break;
 			}
 
 			case EV_PLAYER_RESPAWN: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_PLAYER_RESPAWN;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 				break;
 			}
 
 			case EV_NPC_MOVE: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_NPC_MOVE;
 				o->m_target_id = k.target_id;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
@@ -1521,7 +1530,7 @@ void do_timer() {
 			}
 
 			case EV_NPC_ATTACK: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_NPC_ATTACK;
 				o->m_target_id = k.target_id;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
@@ -1529,7 +1538,7 @@ void do_timer() {
 			}
 
 			case EV_NPC_DIE: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_NPC_DIE;
 				o->m_target_id = k.target_id;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
@@ -1537,16 +1546,15 @@ void do_timer() {
 			}
 
 			case EV_NPC_RESPAWN: {
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_NPC_RESPAWN;
 				PostQueuedCompletionStatus(g_hIOCP, 0, k.obj_id, &o->m_over);
 				break;
 			}
 			}
 
-			timer_lock.lock();
+			std::lock_guard<std::mutex> tl(timer_lock);
 			timer_queue.pop();
-			timer_lock.unlock();
 		}
 	}
 }
@@ -1687,7 +1695,7 @@ void do_query() {
 				strncpy(client->m_name, q.client_id, ID_SIZE);
 				client->m_avatar_id = avatar_id;
 
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_LOGIN;
 				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 
@@ -1713,9 +1721,9 @@ void do_query() {
 					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 					SQLCloseCursor(hstmt);
 
-					EXP_OVER* o = new EXP_OVER;
+					EXP_OVER* o = g_exp_overs.acquire();
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->m_error_code = EXEC_DIRECT;
+					o->m_error_code = EC_DB_EXEC_ERROR;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1733,9 +1741,9 @@ void do_query() {
 					if ((-1 == account_id) || (-2 == account_id)) {
 						SQLCloseCursor(hstmt);
 
-						EXP_OVER* o = new EXP_OVER;
+						EXP_OVER* o = g_exp_overs.acquire();
 						o->m_io_type = IO_LOGIN_FAIL;
-						o->m_error_code = (-1 == account_id) ? NO_ID : WRONG_PW;
+						o->m_error_code = (-1 == account_id) ? EC_NO_ID : EC_WRONG_PW;
 						PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 
 						goto query_pop;
@@ -1753,7 +1761,7 @@ void do_query() {
 				strncpy(client->m_name, q.client_id, ID_SIZE);
 				client->m_account_id = account_id;
 
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_LOGIN_OK;
 				o->m_avatars = std::move(avatars);
 				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
@@ -1779,9 +1787,9 @@ void do_query() {
 					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 					SQLCloseCursor(hstmt);
 
-					EXP_OVER* o = new EXP_OVER;
+					EXP_OVER* o = g_exp_overs.acquire();
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->m_error_code = EXEC_DIRECT;
+					o->m_error_code = EC_DB_EXEC_ERROR;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1800,9 +1808,9 @@ void do_query() {
 				if (-1 == account_id) {
 					SQLCloseCursor(hstmt);
 
-					EXP_OVER* o = new EXP_OVER;
+					EXP_OVER* o = g_exp_overs.acquire();
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->m_error_code = ALREADY_EXIST;
+					o->m_error_code = EC_ID_ALREADY_EXISTS;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1818,7 +1826,7 @@ void do_query() {
 				strncpy(client->m_name, q.client_id, ID_SIZE);
 				client->m_account_id = account_id;
 
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_LOGIN_OK;
 				o->m_avatars = std::move(avatars);
 				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
@@ -1866,9 +1874,9 @@ void do_query() {
 					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 					SQLCloseCursor(hstmt);
 
-					EXP_OVER* o = new EXP_OVER;
+					EXP_OVER* o = g_exp_overs.acquire();
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->m_error_code = EXEC_DIRECT;
+					o->m_error_code = EC_DB_EXEC_ERROR;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1892,7 +1900,7 @@ void do_query() {
 				client->m_avatar_id = q.avatar_id;
 				client->m_state = ST_INGAME;
 
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_LOGIN;
 				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 
@@ -1915,9 +1923,9 @@ void do_query() {
 					HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 					SQLCloseCursor(hstmt);
 
-					EXP_OVER* o = new EXP_OVER;
+					EXP_OVER* o = g_exp_overs.acquire();
 					o->m_io_type = IO_LOGIN_FAIL;
-					o->m_error_code = EXEC_DIRECT;
+					o->m_error_code = EC_DB_EXEC_ERROR;
 					PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 					break;
 				}
@@ -1942,7 +1950,7 @@ void do_query() {
 				client->m_y = y;
 				client->m_state = ST_INGAME;
 
-				EXP_OVER* o = new EXP_OVER;
+				EXP_OVER* o = g_exp_overs.acquire();
 				o->m_io_type = IO_LOGIN;
 				PostQueuedCompletionStatus(g_hIOCP, 0, q.obj_id, &o->m_over);
 
@@ -2482,16 +2490,14 @@ int API_register_event(lua_State* L) {
 	if (nullptr == npc) { return 0; }
 
 	if (true == should_attack) {
-		timer_lock.lock();
+		std::lock_guard<std::mutex> tl(timer_lock);
 		timer_queue.emplace(event{ npc_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_ATTACK });
-		timer_lock.unlock();
 
 		return 0;
 	}
 
-	timer_lock.lock();
+	std::lock_guard<std::mutex> tl(timer_lock);
 	timer_queue.emplace(event{ npc_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-	timer_lock.unlock();
 
 	return 0;
 }

@@ -8,9 +8,11 @@ constexpr int PW_SIZE = 64;
 constexpr int NAME_SIZE = 32;
 constexpr int CHAT_SIZE = 100;
 
+constexpr int MAX_EXP_COUNT = 30000;
+
 // Character
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 50000;
+constexpr int MAX_NPC = 200000;
 constexpr int INVALID_ID = -1;
 
 constexpr int PAWN = 0;
@@ -74,13 +76,15 @@ constexpr char SC_LEVEL_UP = 12;
 constexpr char SC_DAMAGE = 13;
 constexpr char SC_DEATH = 14;
 constexpr char SC_HEAL = 15;
+constexpr char SC_RESPAWN = 16;
 
 // Error Code
-constexpr char NO_ID = -1;  
-constexpr char WRONG_PW = -2;  
-constexpr char DUPLICATED = -3;  
-constexpr char EXEC_DIRECT = -4;
-constexpr char ALREADY_EXIST = -5;
+constexpr char EC_SUCCESS = 0;
+constexpr char EC_NO_ID = -1;  
+constexpr char EC_WRONG_PW = -2;  
+constexpr char EC_DUPLICATED_LOGIN = -3;  
+constexpr char EC_DB_EXEC_ERROR = -4;
+constexpr char EC_ID_ALREADY_EXISTS = -5;
 
 #pragma pack (push, 1)
 
@@ -179,6 +183,7 @@ struct SC_ADD_OBJECT_PACKET {
 	char	type;
 	int		id;
 	int		hp;
+	int		max_hp;
 	int		level;
 	short	x, y;
 	char	name[NAME_SIZE];
@@ -251,6 +256,13 @@ struct SC_DEATH_PACKET {
 	unsigned char size;
 	char	type;
 	int		id;
+};
+
+struct SC_RESPAWN_PACKET {
+	unsigned char size;
+	char	type;
+	int		id;
+	short	x, y;
 };
 
 #pragma pack (pop)

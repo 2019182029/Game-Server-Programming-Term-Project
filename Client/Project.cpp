@@ -973,23 +973,23 @@ void process_packet(char* packet) {
 		SC_LOGIN_FAIL_PACKET* p = reinterpret_cast<SC_LOGIN_FAIL_PACKET*>(packet);
 
 		switch (p->error_code) {
-		case NO_ID:
+		case EC_NO_ID:
 			MessageBox(g_hWnd, L"ID does not exist", L"Error", MB_OK | MB_ICONERROR);
 			break;
 
-		case WRONG_PW:
+		case EC_WRONG_PW:
 			MessageBox(g_hWnd, L"Password is incorrect", L"Error", MB_OK | MB_ICONERROR);
 			break;
 
-		case DUPLICATED:
+		case EC_DUPLICATED_LOGIN:
 			MessageBox(g_hWnd, L"Account is already logged in", L"Error", MB_OK | MB_ICONERROR);
 			break;
 
-		case EXEC_DIRECT:
+		case EC_DB_EXEC_ERROR:
 			MessageBox(g_hWnd, L"Failed to load user data", L"Error", MB_OK | MB_ICONERROR);
 			break;
 
-		case ALREADY_EXIST:
+		case EC_ID_ALREADY_EXISTS:
 			MessageBox(g_hWnd, L"ID already exist", L"Error", MB_OK | MB_ICONERROR);
 			break;
 		}
@@ -1018,6 +1018,7 @@ void process_packet(char* packet) {
 		other.m_x = p->x;
 		other.m_y = p->y;
 		other.m_hp = p->hp;
+		other.m_max_hp = p->max_hp;
 		other.m_level = p->level;
 		strcpy(other.m_name, p->name);
 		others.emplace(other.m_id, other);
@@ -1029,11 +1030,6 @@ void process_packet(char* packet) {
 		if (player.m_id == p->id) {
 			player.m_x = p->x;
 			player.m_y = p->y;
-
-			if (false == player.m_is_alive) {
-				player.m_hp = player.m_max_hp;
-				player.m_is_alive = true;
-			}
 
 			player.update_camera();
 			break;
@@ -1144,6 +1140,28 @@ void process_packet(char* packet) {
 		if (others.count(p->id)) {
 			others.at(p->id).m_is_alive = false;
 		}
+		break;
+	}
+
+	case SC_RESPAWN: {
+		SC_RESPAWN_PACKET* p = reinterpret_cast<SC_RESPAWN_PACKET*>(packet);
+
+		if (player.m_id == p->id) {
+			player.m_x = p->x;
+			player.m_y = p->y;
+			player.m_is_alive = true;
+			player.m_hp = player.m_max_hp;
+
+			player.update_camera();
+			break;
+		}
+
+		if (others.count(p->id)) {
+			others.at(p->id).m_x = p->x;
+			others.at(p->id).m_y = p->y;
+			others.at(p->id).m_is_alive = true;
+			others.at(p->id).m_hp = others.at(p->id).m_max_hp;
+		}		
 		break;
 	}
 

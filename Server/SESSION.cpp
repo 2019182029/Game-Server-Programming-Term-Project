@@ -5,6 +5,7 @@
 #include "SESSION.h"
 
 concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
+thread_local EXP_OVER_POOL g_exp_overs;
 
 std::priority_queue<event> timer_queue;
 std::mutex timer_lock;
@@ -29,6 +30,53 @@ EXP_OVER::~EXP_OVER() {
 
 }
 
+void EXP_OVER::reset() {
+	ZeroMemory(&m_over, sizeof(m_over));
+	ZeroMemory(&m_buffer, sizeof(m_buffer));
+	m_wsabuf[0].len = sizeof(m_buffer);
+	m_wsabuf[0].buf = m_buffer;
+
+	m_accept_socket = INVALID_SOCKET;
+	m_io_type = IO_NONE;  
+
+	m_target_id = INVALID_ID;
+
+	m_error_code = EC_SUCCESS;
+	m_avatars.clear();
+}
+
+EXP_OVER_POOL::EXP_OVER_POOL() {
+	m_capacity = MAX_EXP_COUNT / std::thread::hardware_concurrency();
+}
+
+EXP_OVER_POOL::~EXP_OVER_POOL() {
+	while (!m_pool.empty()) {
+		delete m_pool.top();
+		m_pool.pop();
+	}
+}
+
+EXP_OVER* EXP_OVER_POOL::acquire() {
+	if (m_pool.empty()) {
+		return new EXP_OVER;
+	} else {
+		EXP_OVER* obj = m_pool.top();
+		m_pool.pop();
+		return obj;
+	}
+}
+
+void EXP_OVER_POOL::release(EXP_OVER* eo) {
+	if (nullptr == eo) { return; }
+
+	if (m_pool.size() >= m_capacity) {
+		delete eo;
+	} else {
+		eo->reset();
+		m_pool.push(eo);
+	}
+}
+
 //////////////////////////////////////////////////
 // SESSION
 SESSION::SESSION() {
@@ -46,7 +94,7 @@ SESSION::SESSION(int id) : m_id(id) {
 	m_is_active = false;
 }
 
-SESSION::SESSION(int id, SOCKET c_socket) : m_c_socket(c_socket), m_id(id) {
+SESSION::SESSION(int id, SOCKET c_socket) : m_id(id), m_c_socket(c_socket) {
 	m_remained = 0;
 	m_state = ST_ACCEPT;
 
@@ -70,16 +118,29 @@ void SESSION::do_recv() {
 
 	DWORD recv_flag = 0;
 	auto ret = WSARecv(m_c_socket, m_recv_over.m_wsabuf, 1, NULL, &recv_flag, reinterpret_cast<WSAOVERLAPPED*>(&m_recv_over), NULL);
+	//if (ret == SOCKET_ERROR) {
+	//	int err = WSAGetLastError();
+	//	if (err != WSA_IO_PENDING) {
+	//		printf("[do_recv] WSARecv failed! Error: %d\n", err);
+	//	}
+	//}
 }
 
 void SESSION::do_send(void* buff) {
-	EXP_OVER* o = new EXP_OVER(IO_SEND);
+	EXP_OVER* o = g_exp_overs.acquire();
+	o->m_io_type = IO_SEND;
 	unsigned char packet_size = reinterpret_cast<unsigned char*>(buff)[0];
 	memcpy(o->m_buffer, buff, packet_size);
 	o->m_wsabuf[0].len = packet_size;
 
 	DWORD send_bytes;
 	auto ret = WSASend(m_c_socket, o->m_wsabuf, 1, &send_bytes, 0, &(o->m_over), NULL);
+	//if (ret == SOCKET_ERROR) {
+	//	int err = WSAGetLastError();
+	//	if (err != WSA_IO_PENDING) {
+	//		printf("[do_send] WSASend failed! Error: %d\n", err);
+	//	}
+	//}
 }
 
 void SESSION::send_login_ok(const std::vector<AVATAR>& avatars) {
@@ -138,6 +199,7 @@ void SESSION::send_add_object(int c_id) {
 	p.x = client->m_x;
 	p.y = client->m_y;
 	p.hp = client->m_hp;
+	p.max_hp = client->m_max_hp;
 	p.level = client->m_level;
 	strcpy(p.name, client->m_name);
 	m_vl.lock();
@@ -194,9 +256,9 @@ void SESSION::send_attack(int c_id) {
 	do_send(&p);
 }
 
-bool SESSION::earn_exp(int& prev_exp, int& curr_exp) {
-	prev_exp = m_exp.fetch_add(50);
-	curr_exp = prev_exp + 50;
+bool SESSION::earn_exp(int earned_exp, int& prev_exp, int& curr_exp) {
+	prev_exp = m_exp.fetch_add(earned_exp);
+	curr_exp = prev_exp + earned_exp;
 
 	if (0 == (curr_exp % 100)) {
 		if (m_level < KING) {
@@ -229,6 +291,9 @@ void SESSION::send_level_up(int c_id) {
 }
 
 void SESSION::send_damage(int c_id, int hp) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
 	SC_DAMAGE_PACKET p;
 	p.size = sizeof(SC_DAMAGE_PACKET);
 	p.type = SC_DAMAGE;
@@ -257,6 +322,19 @@ void SESSION::send_death(int c_id) {
 	p.size = sizeof(SC_DEATH_PACKET);
 	p.type = SC_DEATH;
 	p.id = c_id;
+	do_send(&p);
+}
+
+void SESSION::send_respawn(int c_id) {
+	std::shared_ptr<SESSION> client = g_clients.at(c_id);
+	if (nullptr == client) return;
+
+	SC_RESPAWN_PACKET p;
+	p.size = sizeof(SC_RESPAWN_PACKET);
+	p.type = SC_RESPAWN;
+	p.id = client->m_id;
+	p.x = client->m_x;
+	p.y = client->m_y;
 	do_send(&p);
 }
 
@@ -293,9 +371,8 @@ void SESSION::wake_up(int target_id) {
 		bool expected = false;
 
 		if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
-			timer_lock.lock();
+			std::lock_guard<std::mutex> tl(timer_lock);
 			timer_queue.emplace(event{ m_id, target_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(1), EV_NPC_MOVE });
-			timer_lock.unlock();
 		}
 	}
 }
@@ -318,7 +395,7 @@ void SESSION::receive_damage(int damage, int target_id, int& hp) {
 	// Heal Event
 	if (m_max_hp == prev_hp) {
 		std::lock_guard<std::mutex> tl(timer_lock);
-		timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
+		timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_HEAL });
 	}
 }
 
@@ -334,9 +411,8 @@ bool SESSION::heal(int& hp) {
 			hp = expected + 1;
 
 			if (m_max_hp > expected + 1) {
-				timer_lock.lock();
-				timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(10), EV_HEAL });
-				timer_lock.unlock();
+				std::lock_guard<std::mutex> tl(timer_lock);
+				timer_queue.emplace(event{ m_id, INVALID_ID, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), EV_HEAL });
 			}
 				
 			return true;

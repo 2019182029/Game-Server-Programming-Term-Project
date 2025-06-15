@@ -10,6 +10,7 @@
 #include <set>
 #include <array>
 #include <queue>
+#include <stack>
 #include <vector>
 #include <atomic>
 #include <random>
@@ -29,9 +30,14 @@
 #pragma comment (lib, "lua54.lib")
 
 class EXP_OVER;
+class EXP_OVER_POOL;
 class SESSION;
 
 extern concurrency::concurrent_unordered_map<int, std::atomic<std::shared_ptr<SESSION>>> g_clients;
+extern thread_local EXP_OVER_POOL g_exp_overs;
+
+extern std::unordered_set<int> g_ids;
+extern std::mutex g_id_lock;
 
 extern std::default_random_engine dre;
 extern std::uniform_int_distribution<int> uid;
@@ -93,6 +99,7 @@ extern std::mutex query_lock;
 //////////////////////////////////////////////////
 // EXP_OVER
 enum IO_TYPE { 
+	IO_NONE,
 	IO_ACCEPT, IO_SEND, IO_RECV, 
 	IO_LOGIN, IO_LOGIN_OK, IO_LOGIN_FAIL,
 	IO_DAMAGE, IO_HEAL,
@@ -118,6 +125,20 @@ public:
 	EXP_OVER();
 	EXP_OVER(IO_TYPE io_type);
 	~EXP_OVER();
+
+	void reset();
+};
+
+class EXP_OVER_POOL {
+public:
+	int m_capacity;
+	std::stack<EXP_OVER*> m_pool;
+
+	EXP_OVER_POOL();
+	~EXP_OVER_POOL();
+
+	EXP_OVER* acquire();
+	void release(EXP_OVER* eo);
 };
 
 //////////////////////////////////////////////////
@@ -170,12 +191,13 @@ public:
 
 	void send_attack(int c_id);
 
-	bool earn_exp(int& prev_exp, int& curr_exp);
+	bool earn_exp(int earned_exp, int& prev_exp, int& curr_exp);
 	void send_earn_exp(const char* name, int exp);
 	void send_level_up(int c_id);
 	void send_damage(int c_id, int hp);
 	void send_heal(int c_id, int hp);
 	void send_death(int c_id);
+	void send_respawn(int c_id);
 	void send_stat_change();
 
 	void try_wake_up(int target_id);
